@@ -1,5 +1,6 @@
 const AppError = require('../../utils/AppError');
 const repository = require('./gates.repository');
+const withAuthTransaction = require('../../utils/withAuthTransaction');
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -45,18 +46,23 @@ async function getById(companyId, id) {
   return toDTO(gate);
 }
 
-async function create(companyId, { name, description, isActive }) {
+async function create(auth, { name, description, isActive }) {
   if (!name) {
     throw new AppError('Nome é obrigatório', 400);
   }
 
   try {
-    const gate = await repository.insert({
-      company_id: companyId,
-      name,
-      description: description || null,
-      is_active: isActive !== undefined ? Boolean(isActive) : true,
-    });
+    const gate = await withAuthTransaction(auth, (trx) =>
+      repository.insert(
+        {
+          company_id: auth.companyId,
+          name,
+          description: description || null,
+          is_active: isActive !== undefined ? Boolean(isActive) : true,
+        },
+        trx
+      )
+    );
     return toDTO(gate);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
@@ -66,7 +72,7 @@ async function create(companyId, { name, description, isActive }) {
   }
 }
 
-async function update(companyId, id, payload) {
+async function update(auth, id, payload) {
   const changes = {};
 
   if (payload.name !== undefined) changes.name = payload.name;
@@ -78,7 +84,7 @@ async function update(companyId, id, payload) {
   }
 
   try {
-    const gate = await repository.update(id, companyId, changes);
+    const gate = await withAuthTransaction(auth, (trx) => repository.update(id, auth.companyId, changes, trx));
     if (!gate) {
       throw new AppError('Portão não encontrado', 404);
     }

@@ -58,13 +58,14 @@ function listOnTripByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ON_TRIP' }).orderBy('departure_time', 'asc');
 }
 
-async function insert(data) {
-  const [row] = await db('fleet_logs').insert(data).returning(COLUMNS);
+// trx opcional (default: db): ver withAuthTransaction.
+async function insert(data, trx = db) {
+  const [row] = await trx('fleet_logs').insert(data).returning(COLUMNS);
   return row;
 }
 
-async function update(id, companyId, data) {
-  const [row] = await db('fleet_logs')
+async function update(id, companyId, data, trx = db) {
+  const [row] = await trx('fleet_logs')
     .where({ id, company_id: companyId })
     .whereNull('deleted_at')
     .update(data)

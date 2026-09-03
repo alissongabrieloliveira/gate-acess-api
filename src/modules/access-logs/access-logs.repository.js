@@ -57,13 +57,14 @@ function listActiveByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ACTIVE' }).orderBy('entry_time', 'asc');
 }
 
-async function insert(data) {
-  const [row] = await db('access_logs').insert(data).returning(COLUMNS);
+// trx opcional (default: db): ver withAuthTransaction.
+async function insert(data, trx = db) {
+  const [row] = await trx('access_logs').insert(data).returning(COLUMNS);
   return row;
 }
 
-async function update(id, companyId, data) {
-  const [row] = await db('access_logs')
+async function update(id, companyId, data, trx = db) {
+  const [row] = await trx('access_logs')
     .where({ id, company_id: companyId })
     .whereNull('deleted_at')
     .update(data)

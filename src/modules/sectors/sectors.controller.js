@@ -20,7 +20,7 @@ async function getById(req, res, next) {
 
 async function create(req, res, next) {
   try {
-    const sector = await sectorsService.create(req.auth.companyId, req.body || {});
+    const sector = await sectorsService.create(req.auth, req.body || {});
     return res.status(201).json(sector);
   } catch (err) {
     return next(err);
@@ -29,7 +29,7 @@ async function create(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const sector = await sectorsService.update(req.auth.companyId, Number(req.params.id), req.body || {});
+    const sector = await sectorsService.update(req.auth, Number(req.params.id), req.body || {});
     return res.status(200).json(sector);
   } catch (err) {
     return next(err);

@@ -29,7 +29,7 @@ async function getById(req, res, next) {
 
 async function create(req, res, next) {
   try {
-    const log = await fleetLogsService.registerDeparture(req.auth.companyId, req.auth.userId, req.body || {});
+    const log = await fleetLogsService.registerDeparture(req.auth, req.body || {});
     return res.status(201).json(log);
   } catch (err) {
     return next(err);
@@ -38,12 +38,7 @@ async function create(req, res, next) {
 
 async function returnTrip(req, res, next) {
   try {
-    const log = await fleetLogsService.registerReturn(
-      req.auth.companyId,
-      req.auth.userId,
-      Number(req.params.id),
-      req.body || {}
-    );
+    const log = await fleetLogsService.registerReturn(req.auth, Number(req.params.id), req.body || {});
     return res.status(200).json(log);
   } catch (err) {
     return next(err);

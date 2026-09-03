@@ -20,7 +20,7 @@ async function getById(req, res, next) {
 
 async function create(req, res, next) {
   try {
-    const vehicle = await vehiclesService.create(req.auth.companyId, req.body || {});
+    const vehicle = await vehiclesService.create(req.auth, req.body || {});
     return res.status(201).json(vehicle);
   } catch (err) {
     return next(err);
@@ -29,7 +29,7 @@ async function create(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const vehicle = await vehiclesService.update(req.auth.companyId, Number(req.params.id), req.body || {});
+    const vehicle = await vehiclesService.update(req.auth, Number(req.params.id), req.body || {});
     return res.status(200).json(vehicle);
   } catch (err) {
     return next(err);
@@ -38,7 +38,7 @@ async function update(req, res, next) {
 
 async function block(req, res, next) {
   try {
-    const vehicle = await vehiclesService.setBlocked(req.auth.companyId, Number(req.params.id), req.body || {});
+    const vehicle = await vehiclesService.setBlocked(req.auth, Number(req.params.id), req.body || {});
     return res.status(200).json(vehicle);
   } catch (err) {
     return next(err);

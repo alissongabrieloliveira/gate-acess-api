@@ -1,5 +1,6 @@
 const AppError = require('../../utils/AppError');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
+const withAuthTransaction = require('../../utils/withAuthTransaction');
 const repository = require('./access-logs.repository');
 const peopleRepository = require('../people/people.repository');
 const vehiclesRepository = require('../vehicles/vehicles.repository');
@@ -82,7 +83,8 @@ async function getById(companyId, id) {
   return toDTO(log);
 }
 
-async function registerEntry(companyId, operatorId, payload) {
+async function registerEntry(auth, payload) {
+  const { companyId } = auth;
   const {
     personId,
     visitedPersonId,
@@ -149,28 +151,34 @@ async function registerEntry(companyId, operatorId, payload) {
   );
 
   try {
-    const log = await repository.insert({
-      company_id: companyId,
-      person_id: Number(personId),
-      visited_person_id: visitedPersonId ? Number(visitedPersonId) : null,
-      vehicle_id: vehicleId ? Number(vehicleId) : null,
-      destination_sector_id: destinationSectorId ? Number(destinationSectorId) : null,
-      is_km_unavailable: Boolean(isKmUnavailable),
-      km_entry: kmEntry !== undefined ? Number(kmEntry) : null,
-      visit_reason: visitReason || null,
-      entry_gate_id: Number(entryGateId),
-      entry_operator_id: operatorId,
-      receipt_code: receiptCode || null,
-      signed_receipt_url: signedReceiptUrl || null,
-      observation: observation || null,
-    });
+    const log = await withAuthTransaction(auth, (trx) =>
+      repository.insert(
+        {
+          company_id: companyId,
+          person_id: Number(personId),
+          visited_person_id: visitedPersonId ? Number(visitedPersonId) : null,
+          vehicle_id: vehicleId ? Number(vehicleId) : null,
+          destination_sector_id: destinationSectorId ? Number(destinationSectorId) : null,
+          is_km_unavailable: Boolean(isKmUnavailable),
+          km_entry: kmEntry !== undefined ? Number(kmEntry) : null,
+          visit_reason: visitReason || null,
+          entry_gate_id: Number(entryGateId),
+          entry_operator_id: auth.userId,
+          receipt_code: receiptCode || null,
+          signed_receipt_url: signedReceiptUrl || null,
+          observation: observation || null,
+        },
+        trx
+      )
+    );
     return toDTO(log);
   } catch (err) {
     throw mapDbError(err);
   }
 }
 
-async function registerExit(companyId, operatorId, id, payload) {
+async function registerExit(auth, id, payload) {
+  const { companyId } = auth;
   const log = await repository.findByIdAndCompany(id, companyId);
   if (!log) {
     throw new AppError('Registro de acesso não encontrado', 404);
@@ -194,7 +202,7 @@ async function registerExit(companyId, operatorId, id, payload) {
   const changes = {
     exit_time: new Date(),
     exit_gate_id: Number(exitGateId),
-    exit_operator_id: operatorId,
+    exit_operator_id: auth.userId,
     status: STATUS.FINISHED,
   };
   if (kmExit !== undefined) changes.km_exit = Number(kmExit);
@@ -202,7 +210,7 @@ async function registerExit(companyId, operatorId, id, payload) {
   if (observation !== undefined) changes.observation = observation;
 
   try {
-    const updated = await repository.update(id, companyId, changes);
+    const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
     return toDTO(updated);
   } catch (err) {
     throw mapDbError(err);

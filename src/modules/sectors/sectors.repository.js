@@ -22,13 +22,14 @@ function countByCompany(companyId, { isActive }) {
   return query.first();
 }
 
-async function insert(data) {
-  const [row] = await db('sectors').insert(data).returning(COLUMNS);
+// trx opcional (default: db): ver withAuthTransaction.
+async function insert(data, trx = db) {
+  const [row] = await trx('sectors').insert(data).returning(COLUMNS);
   return row;
 }
 
-async function update(id, companyId, data) {
-  const [row] = await db('sectors')
+async function update(id, companyId, data, trx = db) {
+  const [row] = await trx('sectors')
     .where({ id, company_id: companyId })
     .whereNull('deleted_at')
     .update(data)

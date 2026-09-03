@@ -2,6 +2,7 @@ const AppError = require('../../utils/AppError');
 const repository = require('./people.repository');
 const { generateBindex } = require('../../utils/bindex');
 const { encryptField, decryptField } = require('../../utils/crypto');
+const withAuthTransaction = require('../../utils/withAuthTransaction');
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -71,7 +72,7 @@ async function getById(companyId, id) {
   return toDTO(person);
 }
 
-async function create(companyId, { personType, name, cpf, rg, phone, photoUrl }) {
+async function create(auth, { personType, name, cpf, rg, phone, photoUrl }) {
   if (!name) {
     throw new AppError('Nome é obrigatório', 400);
   }
@@ -80,16 +81,21 @@ async function create(companyId, { personType, name, cpf, rg, phone, photoUrl })
   assertValidPersonType(type);
 
   try {
-    const person = await repository.insert({
-      company_id: companyId,
-      person_type: type,
-      name_encrypted: encryptField(name),
-      cpf_encrypted: cpf ? encryptField(cpf) : null,
-      rg_encrypted: rg ? encryptField(rg) : null,
-      cpf_bindex: cpf ? generateBindex(cpf) : null,
-      phone_encrypted: phone ? encryptField(phone) : null,
-      photo_url: photoUrl || null,
-    });
+    const person = await withAuthTransaction(auth, (trx) =>
+      repository.insert(
+        {
+          company_id: auth.companyId,
+          person_type: type,
+          name_encrypted: encryptField(name),
+          cpf_encrypted: cpf ? encryptField(cpf) : null,
+          rg_encrypted: rg ? encryptField(rg) : null,
+          cpf_bindex: cpf ? generateBindex(cpf) : null,
+          phone_encrypted: phone ? encryptField(phone) : null,
+          photo_url: photoUrl || null,
+        },
+        trx
+      )
+    );
     return toDTO(person);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
@@ -99,7 +105,7 @@ async function create(companyId, { personType, name, cpf, rg, phone, photoUrl })
   }
 }
 
-async function update(companyId, id, payload) {
+async function update(auth, id, payload) {
   const changes = {};
 
   if (payload.personType !== undefined) {
@@ -121,7 +127,7 @@ async function update(companyId, id, payload) {
   }
 
   try {
-    const person = await repository.update(id, companyId, changes);
+    const person = await withAuthTransaction(auth, (trx) => repository.update(id, auth.companyId, changes, trx));
     if (!person) {
       throw new AppError('Pessoa não encontrada', 404);
     }
@@ -134,7 +140,7 @@ async function update(companyId, id, payload) {
   }
 }
 
-async function setBlocked(companyId, id, { isBlocked, reason }) {
+async function setBlocked(auth, id, { isBlocked, reason }) {
   if (isBlocked === undefined) {
     throw new AppError('isBlocked é obrigatório', 400);
   }
@@ -142,10 +148,17 @@ async function setBlocked(companyId, id, { isBlocked, reason }) {
     throw new AppError('Motivo do bloqueio é obrigatório', 400);
   }
 
-  const person = await repository.update(id, companyId, {
-    is_blocked: isBlocked,
-    block_reason: isBlocked ? reason : null,
-  });
+  const person = await withAuthTransaction(auth, (trx) =>
+    repository.update(
+      id,
+      auth.companyId,
+      {
+        is_blocked: isBlocked,
+        block_reason: isBlocked ? reason : null,
+      },
+      trx
+    )
+  );
   if (!person) {
     throw new AppError('Pessoa não encontrada', 404);
   }

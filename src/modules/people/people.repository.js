@@ -39,13 +39,16 @@ function countByCompany(companyId, { personType }) {
   return query.first();
 }
 
-async function insert(data) {
-  const [row] = await db('people').insert(data).returning(COLUMNS);
+// trx opcional (default: db): quando informado, permite rodar o INSERT/UPDATE
+// dentro de uma transação que já configurou request.jwt.claims via
+// withAuthTransaction, para log_audit_event() saber quem fez a alteração.
+async function insert(data, trx = db) {
+  const [row] = await trx('people').insert(data).returning(COLUMNS);
   return row;
 }
 
-async function update(id, companyId, data) {
-  const [row] = await db('people')
+async function update(id, companyId, data, trx = db) {
+  const [row] = await trx('people')
     .where({ id, company_id: companyId })
     .whereNull('deleted_at')
     .update(data)

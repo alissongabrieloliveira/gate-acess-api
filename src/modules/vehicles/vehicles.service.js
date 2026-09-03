@@ -1,5 +1,6 @@
 const AppError = require('../../utils/AppError');
 const repository = require('./vehicles.repository');
+const withAuthTransaction = require('../../utils/withAuthTransaction');
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -65,20 +66,25 @@ async function getById(companyId, id) {
   return toDTO(vehicle);
 }
 
-async function create(companyId, { vehicleType, licensePlate, brand, model, color }) {
+async function create(auth, { vehicleType, licensePlate, brand, model, color }) {
   if (!licensePlate) {
     throw new AppError('Placa é obrigatória', 400);
   }
 
   try {
-    const vehicle = await repository.insert({
-      company_id: companyId,
-      vehicle_type: Number.isInteger(vehicleType) ? vehicleType : 1,
-      license_plate: normalizePlate(licensePlate),
-      brand: brand || null,
-      model: model || null,
-      color: color || null,
-    });
+    const vehicle = await withAuthTransaction(auth, (trx) =>
+      repository.insert(
+        {
+          company_id: auth.companyId,
+          vehicle_type: Number.isInteger(vehicleType) ? vehicleType : 1,
+          license_plate: normalizePlate(licensePlate),
+          brand: brand || null,
+          model: model || null,
+          color: color || null,
+        },
+        trx
+      )
+    );
     return toDTO(vehicle);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
@@ -88,7 +94,7 @@ async function create(companyId, { vehicleType, licensePlate, brand, model, colo
   }
 }
 
-async function update(companyId, id, payload) {
+async function update(auth, id, payload) {
   const changes = {};
 
   if (payload.vehicleType !== undefined) changes.vehicle_type = Number(payload.vehicleType);
@@ -103,7 +109,7 @@ async function update(companyId, id, payload) {
   }
 
   try {
-    const vehicle = await repository.update(id, companyId, changes);
+    const vehicle = await withAuthTransaction(auth, (trx) => repository.update(id, auth.companyId, changes, trx));
     if (!vehicle) {
       throw new AppError('Veículo não encontrado', 404);
     }
@@ -116,7 +122,7 @@ async function update(companyId, id, payload) {
   }
 }
 
-async function setBlocked(companyId, id, { isBlocked, reason }) {
+async function setBlocked(auth, id, { isBlocked, reason }) {
   if (isBlocked === undefined) {
     throw new AppError('isBlocked é obrigatório', 400);
   }
@@ -124,10 +130,17 @@ async function setBlocked(companyId, id, { isBlocked, reason }) {
     throw new AppError('Motivo do bloqueio é obrigatório', 400);
   }
 
-  const vehicle = await repository.update(id, companyId, {
-    is_blocked: isBlocked,
-    block_reason: isBlocked ? reason : null,
-  });
+  const vehicle = await withAuthTransaction(auth, (trx) =>
+    repository.update(
+      id,
+      auth.companyId,
+      {
+        is_blocked: isBlocked,
+        block_reason: isBlocked ? reason : null,
+      },
+      trx
+    )
+  );
   if (!vehicle) {
     throw new AppError('Veículo não encontrado', 404);
   }

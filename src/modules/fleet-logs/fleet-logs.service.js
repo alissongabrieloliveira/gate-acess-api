@@ -1,5 +1,6 @@
 const AppError = require('../../utils/AppError');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
+const withAuthTransaction = require('../../utils/withAuthTransaction');
 const repository = require('./fleet-logs.repository');
 const peopleRepository = require('../people/people.repository');
 const vehiclesRepository = require('../vehicles/vehicles.repository');
@@ -79,7 +80,8 @@ async function getById(companyId, id) {
   return toDTO(log);
 }
 
-async function registerDeparture(companyId, operatorId, payload) {
+async function registerDeparture(auth, payload) {
+  const { companyId } = auth;
   const {
     vehicleId,
     driverId,
@@ -143,28 +145,34 @@ async function registerDeparture(companyId, operatorId, payload) {
   );
 
   try {
-    const log = await repository.insert({
-      company_id: companyId,
-      vehicle_id: Number(vehicleId),
-      driver_id: driverId ? Number(driverId) : null,
-      transporting_vehicle_id: transportingVehicleId ? Number(transportingVehicleId) : null,
-      transported_by_plate: transportedByPlate ? normalizePlate(transportedByPlate) : null,
-      destination: destination || null,
-      purpose: purpose || null,
-      departure_gate_id: Number(departureGateId),
-      departure_operator_id: operatorId,
-      km_departure: kmDeparture !== undefined ? Number(kmDeparture) : null,
-      is_km_unavailable: Boolean(isKmUnavailable),
-      fuel_level_departure: fuelLevelDeparture !== undefined ? Number(fuelLevelDeparture) : null,
-      observation: observation || null,
-    });
+    const log = await withAuthTransaction(auth, (trx) =>
+      repository.insert(
+        {
+          company_id: companyId,
+          vehicle_id: Number(vehicleId),
+          driver_id: driverId ? Number(driverId) : null,
+          transporting_vehicle_id: transportingVehicleId ? Number(transportingVehicleId) : null,
+          transported_by_plate: transportedByPlate ? normalizePlate(transportedByPlate) : null,
+          destination: destination || null,
+          purpose: purpose || null,
+          departure_gate_id: Number(departureGateId),
+          departure_operator_id: auth.userId,
+          km_departure: kmDeparture !== undefined ? Number(kmDeparture) : null,
+          is_km_unavailable: Boolean(isKmUnavailable),
+          fuel_level_departure: fuelLevelDeparture !== undefined ? Number(fuelLevelDeparture) : null,
+          observation: observation || null,
+        },
+        trx
+      )
+    );
     return toDTO(log);
   } catch (err) {
     throw mapDbError(err);
   }
 }
 
-async function registerReturn(companyId, operatorId, id, payload) {
+async function registerReturn(auth, id, payload) {
+  const { companyId } = auth;
   const log = await repository.findByIdAndCompany(id, companyId);
   if (!log) {
     throw new AppError('Registro de frota não encontrado', 404);
@@ -188,7 +196,7 @@ async function registerReturn(companyId, operatorId, id, payload) {
   const changes = {
     return_time: new Date(),
     return_gate_id: Number(returnGateId),
-    return_operator_id: operatorId,
+    return_operator_id: auth.userId,
     status: STATUS.RETURNED,
   };
   if (kmReturn !== undefined) changes.km_return = Number(kmReturn);
@@ -197,7 +205,7 @@ async function registerReturn(companyId, operatorId, id, payload) {
   if (observation !== undefined) changes.observation = observation;
 
   try {
-    const updated = await repository.update(id, companyId, changes);
+    const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
     return toDTO(updated);
   } catch (err) {
     throw mapDbError(err);

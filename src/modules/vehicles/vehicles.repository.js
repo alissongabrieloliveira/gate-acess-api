@@ -41,13 +41,15 @@ function countByCompany(companyId, { vehicleType, operationStatus }) {
   return query.first();
 }
 
-async function insert(data) {
-  const [row] = await db('vehicles').insert(data).returning(COLUMNS);
+// trx opcional (default: db): ver withAuthTransaction — permite log_audit_event()
+// saber quem fez a alteração.
+async function insert(data, trx = db) {
+  const [row] = await trx('vehicles').insert(data).returning(COLUMNS);
   return row;
 }
 
-async function update(id, companyId, data) {
-  const [row] = await db('vehicles')
+async function update(id, companyId, data, trx = db) {
+  const [row] = await trx('vehicles')
     .where({ id, company_id: companyId })
     .whereNull('deleted_at')
     .update(data)
