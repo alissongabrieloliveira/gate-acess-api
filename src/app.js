@@ -7,6 +7,8 @@ const companiesRoutes = require('./modules/companies/companies.routes');
 const usersRoutes = require('./modules/users/users.routes');
 const peopleRoutes = require('./modules/people/people.routes');
 const vehiclesRoutes = require('./modules/vehicles/vehicles.routes');
+const gatesRoutes = require('./modules/gates/gates.routes');
+const sectorsRoutes = require('./modules/sectors/sectors.routes');
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
@@ -20,6 +22,8 @@ app.use('/api/v1/companies', companiesRoutes);
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/people', peopleRoutes);
 app.use('/api/v1/vehicles', vehiclesRoutes);
+app.use('/api/v1/gates', gatesRoutes);
+app.use('/api/v1/sectors', sectorsRoutes);
 
 app.use(errorHandler);
 
