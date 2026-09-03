@@ -11,6 +11,8 @@ const gatesRoutes = require('./modules/gates/gates.routes');
 const sectorsRoutes = require('./modules/sectors/sectors.routes');
 const accessLogsRoutes = require('./modules/access-logs/access-logs.routes');
 const fleetLogsRoutes = require('./modules/fleet-logs/fleet-logs.routes');
+const auditLogsRoutes = require('./modules/audit-logs/audit-logs.routes');
+const loginLogsRoutes = require('./modules/login-logs/login-logs.routes');
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
@@ -28,6 +30,8 @@ app.use('/api/v1/gates', gatesRoutes);
 app.use('/api/v1/sectors', sectorsRoutes);
 app.use('/api/v1/access-logs', accessLogsRoutes);
 app.use('/api/v1/fleet-logs', fleetLogsRoutes);
+app.use('/api/v1/audit-logs', auditLogsRoutes);
+app.use('/api/v1/login-logs', loginLogsRoutes);
 
 app.use(errorHandler);
 
