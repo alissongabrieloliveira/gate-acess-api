@@ -12,6 +12,7 @@ const COLUMNS = [
   'is_blocked',
   'block_reason',
   'photo_url',
+  'identification_code',
   'created_at',
   'updated_at',
 ];
@@ -26,6 +27,10 @@ function findByIdAndCompany(id, companyId) {
 
 function findByPlate(licensePlate, companyId) {
   return baseQuery(companyId).where({ license_plate: licensePlate }).first();
+}
+
+function findByIdentificationCode(identificationCode, companyId) {
+  return baseQuery(companyId).where({ identification_code: identificationCode }).first();
 }
 
 function listByCompany(companyId, { limit, offset, vehicleType, operationStatus }) {
@@ -61,6 +66,7 @@ async function update(id, companyId, data, trx = db) {
 module.exports = {
   findByIdAndCompany,
   findByPlate,
+  findByIdentificationCode,
   listByCompany,
   countByCompany,
   insert,

@@ -4,6 +4,18 @@ const withAuthTransaction = require('../../utils/withAuthTransaction');
 
 const UNIQUE_VIOLATION = '23505';
 
+// Placa e código de identificação são dois índices únicos parciais
+// diferentes (ver migrations) — o nome do índice violado (`err.constraint`)
+// diz qual dos dois, pra devolver uma mensagem específica em vez de sempre
+// assumir que foi a placa.
+function mapUniqueViolation(err) {
+  if (err.code !== UNIQUE_VIOLATION) return err;
+  if (err.constraint === 'idx_vehicles_identification_unique') {
+    return new AppError('Já existe um veículo com essa identificação nesta empresa', 409);
+  }
+  return new AppError('Já existe um veículo com essa placa nesta empresa', 409);
+}
+
 // 1=Visitante, 2=Frota Própria, 3=Colaborador, 4=Prestador de Serviço
 // (definido pelo usuário — gate_schema.sql não trazia uma enumeração formal
 // pra esse campo, só o default 1).
@@ -42,16 +54,27 @@ function toDTO(vehicle) {
     isBlocked: vehicle.is_blocked,
     blockReason: vehicle.block_reason,
     photoUrl: vehicle.photo_url,
+    identificationCode: vehicle.identification_code,
     createdAt: vehicle.created_at,
     updatedAt: vehicle.updated_at,
   };
 }
 
-/** Busca exata por placa (query param `plate`) — útil para checar na portaria se um
- * veículo já está cadastrado/bloqueado antes de duplicar, sem paginar tudo. */
-async function list(companyId, { page, limit, vehicleType, operationStatus, plate } = {}) {
+/** Busca exata por placa (query param `plate`) ou por código de identificação
+ * (query param `identification`) — útil para checar na portaria se um veículo
+ * já está cadastrado/bloqueado antes de duplicar, ou pra achar rápido um
+ * veículo de frota própria pelo número interno, sem paginar tudo. */
+async function list(companyId, { page, limit, vehicleType, operationStatus, plate, identification } = {}) {
   if (plate) {
     const vehicle = await repository.findByPlate(normalizePlate(plate), companyId);
+    return {
+      data: vehicle ? [toDTO(vehicle)] : [],
+      pagination: { page: 1, limit: 1, total: vehicle ? 1 : 0 },
+    };
+  }
+
+  if (identification) {
+    const vehicle = await repository.findByIdentificationCode(identification, companyId);
     return {
       data: vehicle ? [toDTO(vehicle)] : [],
       pagination: { page: 1, limit: 1, total: vehicle ? 1 : 0 },
@@ -83,7 +106,7 @@ async function getById(companyId, id) {
   return toDTO(vehicle);
 }
 
-async function create(auth, { vehicleType, licensePlate, brand, model, color }) {
+async function create(auth, { vehicleType, licensePlate, brand, model, color, identificationCode }) {
   if (!licensePlate) {
     throw new AppError('Placa é obrigatória', 400);
   }
@@ -101,16 +124,14 @@ async function create(auth, { vehicleType, licensePlate, brand, model, color }) 
           brand: brand || null,
           model: model || null,
           color: color || null,
+          identification_code: identificationCode?.trim() || null,
         },
         trx
       )
     );
     return toDTO(vehicle);
   } catch (err) {
-    if (err.code === UNIQUE_VIOLATION) {
-      throw new AppError('Já existe um veículo com essa placa nesta empresa', 409);
-    }
-    throw err;
+    throw mapUniqueViolation(err);
   }
 }
 
@@ -127,6 +148,9 @@ async function update(auth, id, payload) {
   if (payload.model !== undefined) changes.model = payload.model || null;
   if (payload.color !== undefined) changes.color = payload.color || null;
   if (payload.operationStatus !== undefined) changes.operation_status = payload.operationStatus;
+  if (payload.identificationCode !== undefined) {
+    changes.identification_code = payload.identificationCode?.trim() || null;
+  }
 
   if (Object.keys(changes).length === 0) {
     throw new AppError('Nenhum campo para atualizar foi enviado', 400);
@@ -139,10 +163,7 @@ async function update(auth, id, payload) {
     }
     return toDTO(vehicle);
   } catch (err) {
-    if (err.code === UNIQUE_VIOLATION) {
-      throw new AppError('Já existe um veículo com essa placa nesta empresa', 409);
-    }
-    throw err;
+    throw mapUniqueViolation(err);
   }
 }
 
