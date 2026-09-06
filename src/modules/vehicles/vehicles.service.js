@@ -4,6 +4,21 @@ const withAuthTransaction = require('../../utils/withAuthTransaction');
 
 const UNIQUE_VIOLATION = '23505';
 
+// 1=Visitante, 2=Frota Própria, 3=Colaborador, 4=Prestador de Serviço
+// (definido pelo usuário — gate_schema.sql não trazia uma enumeração formal
+// pra esse campo, só o default 1).
+const VEHICLE_TYPES = { VISITOR: 1, OWN_FLEET: 2, EMPLOYEE: 3, CONTRACTOR: 4 };
+const VALID_VEHICLE_TYPES = Object.values(VEHICLE_TYPES);
+
+function assertValidVehicleType(vehicleType) {
+  if (vehicleType !== undefined && !VALID_VEHICLE_TYPES.includes(vehicleType)) {
+    throw new AppError(
+      'vehicle_type inválido (use 1=Visitante, 2=Frota Própria, 3=Colaborador, 4=Prestador de Serviço)',
+      400
+    );
+  }
+}
+
 /**
  * gate_schema.sql: "Salvo em letras maiúsculas e sem traço no backend" — não há
  * trigger de normalização no banco (diferente do CNPJ de companies), então isso
@@ -47,6 +62,7 @@ async function list(companyId, { page, limit, vehicleType, operationStatus, plat
   const safePage = Math.max(Number(page) || 1, 1);
   const offset = (safePage - 1) * safeLimit;
   const parsedType = vehicleType !== undefined ? Number(vehicleType) : undefined;
+  assertValidVehicleType(parsedType);
 
   const [rows, totalRow] = await Promise.all([
     repository.listByCompany(companyId, { limit: safeLimit, offset, vehicleType: parsedType, operationStatus }),
@@ -72,12 +88,15 @@ async function create(auth, { vehicleType, licensePlate, brand, model, color }) 
     throw new AppError('Placa é obrigatória', 400);
   }
 
+  const type = vehicleType !== undefined ? Number(vehicleType) : VEHICLE_TYPES.VISITOR;
+  assertValidVehicleType(type);
+
   try {
     const vehicle = await withAuthTransaction(auth, (trx) =>
       repository.insert(
         {
           company_id: auth.companyId,
-          vehicle_type: Number.isInteger(vehicleType) ? vehicleType : 1,
+          vehicle_type: type,
           license_plate: normalizePlate(licensePlate),
           brand: brand || null,
           model: model || null,
@@ -98,7 +117,11 @@ async function create(auth, { vehicleType, licensePlate, brand, model, color }) 
 async function update(auth, id, payload) {
   const changes = {};
 
-  if (payload.vehicleType !== undefined) changes.vehicle_type = Number(payload.vehicleType);
+  if (payload.vehicleType !== undefined) {
+    const type = Number(payload.vehicleType);
+    assertValidVehicleType(type);
+    changes.vehicle_type = type;
+  }
   if (payload.licensePlate !== undefined) changes.license_plate = normalizePlate(payload.licensePlate);
   if (payload.brand !== undefined) changes.brand = payload.brand || null;
   if (payload.model !== undefined) changes.model = payload.model || null;
@@ -158,4 +181,4 @@ async function setPhoto(auth, id, photoUrl) {
   return toDTO(vehicle);
 }
 
-module.exports = { list, getById, create, update, setBlocked, setPhoto, normalizePlate };
+module.exports = { list, getById, create, update, setBlocked, setPhoto, normalizePlate, VEHICLE_TYPES };
