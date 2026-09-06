@@ -15,3 +15,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Uploads (arquivos enviados pelos usuários, não fazem parte do código-fonte)
+uploads/

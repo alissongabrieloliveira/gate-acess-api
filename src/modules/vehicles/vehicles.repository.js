@@ -11,6 +11,7 @@ const COLUMNS = [
   'operation_status',
   'is_blocked',
   'block_reason',
+  'photo_url',
   'created_at',
   'updated_at',
 ];

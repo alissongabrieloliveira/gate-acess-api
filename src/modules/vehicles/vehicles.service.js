@@ -26,6 +26,7 @@ function toDTO(vehicle) {
     operationStatus: vehicle.operation_status,
     isBlocked: vehicle.is_blocked,
     blockReason: vehicle.block_reason,
+    photoUrl: vehicle.photo_url,
     createdAt: vehicle.created_at,
     updatedAt: vehicle.updated_at,
   };
@@ -147,4 +148,14 @@ async function setBlocked(auth, id, { isBlocked, reason }) {
   return toDTO(vehicle);
 }
 
-module.exports = { list, getById, create, update, setBlocked, normalizePlate };
+async function setPhoto(auth, id, photoUrl) {
+  const vehicle = await withAuthTransaction(auth, (trx) =>
+    repository.update(id, auth.companyId, { photo_url: photoUrl }, trx)
+  );
+  if (!vehicle) {
+    throw new AppError('Veículo não encontrado', 404);
+  }
+  return toDTO(vehicle);
+}
+
+module.exports = { list, getById, create, update, setBlocked, setPhoto, normalizePlate };

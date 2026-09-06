@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const env = require('./config/env');
+const { UPLOADS_ROOT } = require('./middlewares/upload');
 const authRoutes = require('./modules/auth/auth.routes');
 const companiesRoutes = require('./modules/companies/companies.routes');
 const usersRoutes = require('./modules/users/users.routes');
@@ -20,6 +21,11 @@ const app = express();
 app.use(cors({ origin: env.corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Servidas sem autenticação (URLs geradas pelo próprio servidor, nunca
+// adivinháveis o suficiente pra depender só disso, mas simples o bastante
+// pra esse projeto — ver decisão documentada na memória do projeto).
+app.use('/uploads', express.static(UPLOADS_ROOT));
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/companies', companiesRoutes);
