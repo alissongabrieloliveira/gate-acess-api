@@ -27,9 +27,12 @@ function findByCpfBindex(cpfBindex, companyId) {
   return baseQuery(companyId).where({ cpf_bindex: cpfBindex }).first();
 }
 
-function listByCompany(companyId, { limit, offset, personType }) {
+// `blocked` filtra por is_blocked (coluna plana, sem criptografia) — usado
+// pelo relatório de Pessoas Bloqueadas (ver people.service.js).
+function listByCompany(companyId, { limit, offset, personType, blocked }) {
   const query = baseQuery(companyId).orderBy('id', 'asc').limit(limit).offset(offset);
   if (personType !== undefined) query.andWhere({ person_type: personType });
+  if (blocked !== undefined) query.andWhere({ is_blocked: blocked });
   return query;
 }
 
@@ -37,15 +40,17 @@ function listByCompany(companyId, { limit, offset, personType }) {
 // precisa decriptar e filtrar em memória (name/cpf/phone são colunas
 // *_encrypted, não dá pra fazer ILIKE no banco) antes de paginar o
 // resultado já filtrado — ver people.service.js.
-function listAllByCompany(companyId, { personType }) {
+function listAllByCompany(companyId, { personType, blocked }) {
   const query = baseQuery(companyId).orderBy('id', 'asc');
   if (personType !== undefined) query.andWhere({ person_type: personType });
+  if (blocked !== undefined) query.andWhere({ is_blocked: blocked });
   return query;
 }
 
-function countByCompany(companyId, { personType }) {
+function countByCompany(companyId, { personType, blocked }) {
   const query = db('people').where({ company_id: companyId }).whereNull('deleted_at').count('id as count');
   if (personType !== undefined) query.andWhere({ person_type: personType });
+  if (blocked !== undefined) query.andWhere({ is_blocked: blocked });
   return query.first();
 }
 

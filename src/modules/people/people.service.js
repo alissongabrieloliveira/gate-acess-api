@@ -47,7 +47,7 @@ function matchesSearch(person, term, digitsTerm) {
  * padrão do login — em vez de decriptar toda a lista para filtrar. Útil na portaria
  * para checar se um visitante já está cadastrado/bloqueado antes de criar duplicata.
  */
-async function list(companyId, { page, limit, personType, cpf, search } = {}) {
+async function list(companyId, { page, limit, personType, cpf, search, blocked } = {}) {
   if (cpf) {
     const person = await repository.findByCpfBindex(generateBindex(cpf), companyId);
     return {
@@ -60,6 +60,9 @@ async function list(companyId, { page, limit, personType, cpf, search } = {}) {
   const safePage = Math.max(Number(page) || 1, 1);
   const parsedType = personType !== undefined ? Number(personType) : undefined;
   assertValidPersonType(parsedType);
+  // Vem como string de query param ("true"/"false") — só filtra quando
+  // informado (usado pelo relatório de Pessoas Bloqueadas, ?blocked=true).
+  const parsedBlocked = blocked !== undefined ? blocked === true || blocked === 'true' : undefined;
 
   // Busca por nome/CPF/telefone (?search=): name/cpf/phone são colunas
   // *_encrypted, então não dá pra fazer ILIKE no banco — busca teria que
@@ -72,7 +75,7 @@ async function list(companyId, { page, limit, personType, cpf, search } = {}) {
     const term = search.trim().toLowerCase();
     const digitsTerm = term.replace(/\D/g, '');
 
-    const rows = await repository.listAllByCompany(companyId, { personType: parsedType });
+    const rows = await repository.listAllByCompany(companyId, { personType: parsedType, blocked: parsedBlocked });
     const matched = rows.map(toDTO).filter((person) => matchesSearch(person, term, digitsTerm));
 
     const offset = (safePage - 1) * safeLimit;
@@ -84,8 +87,8 @@ async function list(companyId, { page, limit, personType, cpf, search } = {}) {
 
   const offset = (safePage - 1) * safeLimit;
   const [rows, totalRow] = await Promise.all([
-    repository.listByCompany(companyId, { limit: safeLimit, offset, personType: parsedType }),
-    repository.countByCompany(companyId, { personType: parsedType }),
+    repository.listByCompany(companyId, { limit: safeLimit, offset, personType: parsedType, blocked: parsedBlocked }),
+    repository.countByCompany(companyId, { personType: parsedType, blocked: parsedBlocked }),
   ]);
 
   return {
