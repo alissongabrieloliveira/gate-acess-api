@@ -65,6 +65,32 @@ function setReplacedBy(oldId, newId, trx = db) {
   return trx('refresh_tokens').where({ id: oldId }).update({ replaced_by_id: newId });
 }
 
+function insertPasswordResetToken({ companyId, userId, tokenHash, expiresAt }, trx = db) {
+  return trx('password_reset_tokens').insert({
+    company_id: companyId,
+    user_id: userId,
+    token_hash: tokenHash,
+    expires_at: expiresAt,
+  });
+}
+
+function findPasswordResetTokenByHash(tokenHash, trx = db) {
+  return trx('password_reset_tokens').where({ token_hash: tokenHash }).first();
+}
+
+function markPasswordResetTokenUsed(id, trx = db) {
+  return trx('password_reset_tokens').where({ id }).update({ used_at: trx.fn.now() });
+}
+
+// Bypassa users.service.js#update de propósito — aquele exige um `auth` de
+// uma sessão já autenticada, que não existe neste fluxo (o usuário provou
+// posse da conta pelo token de e-mail, não por estar logado). Também zera
+// must_change_password: a pessoa acabou de escolher a senha final, não uma
+// temporária.
+function updateUserPassword(userId, passwordHash, trx = db) {
+  return trx('users').where({ id: userId }).update({ password_hash: passwordHash, must_change_password: false });
+}
+
 module.exports = {
   findUserByEmailBindex,
   findActiveUserById,
@@ -74,4 +100,8 @@ module.exports = {
   revokeRefreshToken,
   revokeAllUserRefreshTokens,
   setReplacedBy,
+  insertPasswordResetToken,
+  findPasswordResetTokenByHash,
+  markPasswordResetTokenUsed,
+  updateUserPassword,
 };

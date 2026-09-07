@@ -52,8 +52,10 @@ const loginIpLimiter = rateLimit({
 // pelo e-mail digitado, independente de onde vieram. Mesmo critério de
 // "só conta falha" do limitador por IP. Não vaza informação de
 // enumeração: a chave é o texto digitado, não se o e-mail existe de fato
-// no banco (mesmo tratamento em qualquer um dos dois casos).
-function loginEmailKey(req) {
+// no banco (mesmo tratamento em qualquer um dos dois casos). Reaproveitado
+// por loginEmailLimiter e forgotPasswordLimiter abaixo — mesma lógica de
+// chave pros dois.
+function emailKey(req) {
   const email = String(req.body?.email || '')
     .trim()
     .toLowerCase();
@@ -70,7 +72,20 @@ const loginEmailLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: loginEmailKey,
+  keyGenerator: emailKey,
+  handler: tooManyRequestsHandler,
+});
+
+// Diferente do login, aqui TODA tentativa conta (não só falhas) — não tem
+// "senha errada" nesse endpoint pra distinguir sucesso de falha, e o
+// objetivo é proteger a caixa de entrada de alguém de ser inundada de
+// e-mails de recuperação, não detectar força bruta de senha.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: emailKey,
   handler: tooManyRequestsHandler,
 });
 
@@ -93,4 +108,4 @@ const refreshLimiter = rateLimit({
   handler: tooManyRequestsHandler,
 });
 
-module.exports = { apiLimiter, loginIpLimiter, loginEmailLimiter, refreshLimiter };
+module.exports = { apiLimiter, loginIpLimiter, loginEmailLimiter, refreshLimiter, forgotPasswordLimiter };

@@ -4,9 +4,19 @@ const env = require('../../config/env');
 const AppError = require('../../utils/AppError');
 const repository = require('./auth.repository');
 const { generateBindex } = require('../../utils/bindex');
-const { comparePassword } = require('../../utils/password');
+const { comparePassword, hashPassword } = require('../../utils/password');
 const { signAccessToken } = require('../../utils/jwt');
-const { generateRefreshToken, hashRefreshToken } = require('../../utils/refreshToken');
+// generateResetToken/hashResetToken são os mesmos generateRefreshToken/
+// hashRefreshToken, só com alias local — a necessidade (opaco, alta
+// entropia, só o hash é persistido) é idêntica pro token de recuperação de
+// senha, então reaproveita em vez de duplicar a lógica num util novo.
+const {
+  generateRefreshToken,
+  hashRefreshToken,
+  generateRefreshToken: generateResetToken,
+  hashRefreshToken: hashResetToken,
+} = require('../../utils/refreshToken');
+const { sendPasswordResetEmail } = require('../../utils/email');
 const parseDuration = require('../../utils/parseDuration');
 
 // Hash bcrypt de uma senha fixa qualquer, calculado uma única vez no início. Usado só
@@ -139,4 +149,57 @@ async function logout({ refreshTokenRaw }) {
   }
 }
 
-module.exports = { login, refresh, logout };
+function passwordResetExpiresAt() {
+  return new Date(Date.now() + parseDuration(env.passwordResetExpiresIn));
+}
+
+// Sempre resolve sem erro pro chamador, exista ou não a conta — o
+// controller responde a mesma coisa nos dois casos (mesmo princípio
+// anti-enumeração do login: nunca revelar se um e-mail está cadastrado).
+async function forgotPassword({ email }) {
+  const emailBindex = generateBindex(email);
+  const user = await repository.findUserByEmailBindex(emailBindex);
+
+  if (!user || !user.is_active) return;
+
+  const { raw, hash } = generateResetToken();
+  await repository.insertPasswordResetToken({
+    companyId: user.company_id,
+    userId: user.id,
+    tokenHash: hash,
+    expiresAt: passwordResetExpiresAt(),
+  });
+
+  // corsOrigin já É a origem do frontend (mesma variável usada pra
+  // configurar o CORS) — sem precisar de uma env var nova só pra isso.
+  const resetUrl = `${env.corsOrigin}/reset-password?token=${raw}`;
+  await sendPasswordResetEmail({ to: email, resetUrl });
+}
+
+async function resetPassword({ token, password }) {
+  if (!token || !password) {
+    throw new AppError('Token e nova senha são obrigatórios', 400);
+  }
+
+  const tokenHash = hashResetToken(token);
+  const record = await repository.findPasswordResetTokenByHash(tokenHash);
+
+  // Mensagem genérica de propósito (não diferencia "não existe" de
+  // "expirado" de "já usado") — não há motivo pra dar essa granularidade
+  // pra quem só tem um token, válido ou não, na mão.
+  if (!record || record.used_at || new Date(record.expires_at) < new Date()) {
+    throw new AppError('Link de recuperação inválido ou expirado', 400);
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  await db.transaction(async (trx) => {
+    await repository.updateUserPassword(record.user_id, passwordHash, trx);
+    await repository.markPasswordResetTokenUsed(record.id, trx);
+    // Mesmo tratamento de segurança da detecção de reuso de refresh token:
+    // se alguém mais tinha sessão aberta na conta, perde o acesso.
+    await repository.revokeAllUserRefreshTokens(record.user_id, trx);
+  });
+}
+
+module.exports = { login, refresh, logout, forgotPassword, resetPassword };

@@ -74,4 +74,30 @@ async function logout(req, res, next) {
   }
 }
 
-module.exports = { login, refresh, logout };
+async function forgotPassword(req, res, next) {
+  try {
+    const { email } = req.body || {};
+    if (!email) {
+      return res.status(400).json({ error: 'E-mail é obrigatório' });
+    }
+
+    await authService.forgotPassword({ email });
+    // Sempre 200 com a mesma mensagem, exista ou não a conta — mesmo
+    // princípio anti-enumeração já usado no login.
+    return res.status(200).json({ message: 'Se o e-mail informado estiver cadastrado, você receberá as instruções em instantes.' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function resetPassword(req, res, next) {
+  try {
+    const { token, password } = req.body || {};
+    await authService.resetPassword({ token, password });
+    return res.status(200).json({ message: 'Senha redefinida com sucesso.' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { login, refresh, logout, forgotPassword, resetPassword };
