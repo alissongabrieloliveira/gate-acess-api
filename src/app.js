@@ -3,6 +3,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const env = require('./config/env');
 const { UPLOADS_ROOT } = require('./middlewares/upload');
+const { apiLimiter } = require('./middlewares/rateLimit');
 const authRoutes = require('./modules/auth/auth.routes');
 const citiesRoutes = require('./modules/cities/cities.routes');
 const companiesRoutes = require('./modules/companies/companies.routes');
@@ -27,6 +28,10 @@ app.use(cookieParser());
 // adivinháveis o suficiente pra depender só disso, mas simples o bastante
 // pra esse projeto — ver decisão documentada na memória do projeto).
 app.use('/uploads', express.static(UPLOADS_ROOT));
+
+// Limite geral em toda a API — os endpoints de auth ainda ganham limites
+// próprios mais rígidos (ver auth.routes.js), aplicados em série com este.
+app.use('/api/v1', apiLimiter);
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/cities', citiesRoutes);
