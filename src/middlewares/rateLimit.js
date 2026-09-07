@@ -10,12 +10,24 @@ function tooManyRequestsHandler(req, res) {
   res.status(429).json({ error: TOO_MANY_REQUESTS_MESSAGE });
 }
 
-// Limite geral, aplicado em toda a API (defesa base contra abuso/DoS) —
-// generoso o bastante pra não atrapalhar uso normal do app (várias telas
-// buscando lookups em paralelo), só contém volume anormal.
+// Limite geral, aplicado em toda a API (defesa base contra abuso/DoS).
+//
+// AJUSTE (achado real de uso): 300/15min por IP estava baixo demais pro
+// padrão de tráfego deste app e acabava sendo atingido só de navegar
+// normalmente — cada tela busca vários "lookups" em paralelo (people,
+// vehicles, gates, contagens por status...), então trocar entre
+// Dashboard/Controle de Acessos/Controle de Frota algumas vezes já soma
+// dezenas de requisições, e uma portaria de verdade costuma ter vários
+// tablets/operadores atrás do mesmo IP da rede local, dividindo essa
+// mesma cota. Como esse limitador é só uma rede de segurança genérica
+// contra tráfego anormal (não é a defesa contra força bruta — essa fica
+// com os limitadores de login abaixo, que continuam apertados), o número
+// certo aqui é bem mais alto: generoso o bastante pra nunca interferir no
+// uso normal, mesmo pesado e com vários dispositivos, e só contém picos
+// claramente fora do padrão (uma varredura/flood de requisições).
 const apiLimiter = rateLimit({
   windowMs: WINDOW_MS,
-  limit: 300,
+  limit: 3000,
   standardHeaders: true,
   legacyHeaders: false,
   handler: tooManyRequestsHandler,
@@ -65,9 +77,17 @@ const loginEmailLimiter = rateLimit({
 // Refresh token já é aleatório de alta entropia (não é adivinhável por
 // força bruta) — este limite é só higiene contra abuso/DoS no endpoint,
 // não proteção contra brute force.
+//
+// AJUSTE (mesmo achado do apiLimiter acima): 60/15min por IP também
+// esbarrava em uso normal — o access token dura só 15min
+// (JWT_ACCESS_EXPIRES_IN), então cada aba recarregada ou cada expiração de
+// token durante o turno dispara um /auth/refresh sozinho, e de novo
+// vários tablets/operadores no mesmo IP dividem essa cota. Levantado pro
+// mesmo espírito do apiLimiter: generoso o bastante pra nunca travar
+// recarregamento/uso normal, ainda com um teto contra abuso de verdade.
 const refreshLimiter = rateLimit({
   windowMs: WINDOW_MS,
-  limit: 60,
+  limit: 300,
   standardHeaders: true,
   legacyHeaders: false,
   handler: tooManyRequestsHandler,
