@@ -3,7 +3,7 @@ const db = require('../../config/db');
 /** Busca usuário ativo (não soft-deletado) pelo blind index do e-mail. */
 function findUserByEmailBindex(emailBindex) {
   return db('users')
-    .select('id', 'company_id', 'password_hash', 'rules', 'is_active')
+    .select('id', 'company_id', 'password_hash', 'rules', 'is_active', 'must_change_password')
     .where({ email_bindex: emailBindex })
     .whereNull('deleted_at')
     .first();
@@ -12,7 +12,7 @@ function findUserByEmailBindex(emailBindex) {
 /** Busca usuário ativo (não soft-deletado) por id — usado para revalidar no refresh. */
 function findActiveUserById(id) {
   return db('users')
-    .select('id', 'company_id', 'rules', 'is_active')
+    .select('id', 'company_id', 'rules', 'is_active', 'must_change_password')
     .where({ id })
     .whereNull('deleted_at')
     .first();

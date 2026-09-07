@@ -11,7 +11,12 @@ function authenticate(req, res, next) {
 
   try {
     const payload = verifyAccessToken(token);
-    req.auth = { userId: payload.sub, companyId: payload.company_id, rules: payload.rules };
+    req.auth = {
+      userId: payload.sub,
+      companyId: payload.company_id,
+      rules: payload.rules,
+      mustChangePassword: Boolean(payload.must_change_password),
+    };
     return next();
   } catch (err) {
     return res.status(401).json({ error: 'Token de acesso inválido ou expirado' });

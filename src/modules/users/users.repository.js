@@ -8,6 +8,7 @@ const COLUMNS = [
   'email_encrypted',
   'rules',
   'is_active',
+  'must_change_password',
   'email_verified_at',
   'created_at',
   'updated_at',

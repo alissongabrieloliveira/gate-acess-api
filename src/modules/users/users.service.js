@@ -20,6 +20,7 @@ function toDTO(user) {
     email: decryptField(user.email_encrypted),
     rules: user.rules,
     isActive: user.is_active,
+    mustChangePassword: user.must_change_password,
     emailVerifiedAt: user.email_verified_at,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
@@ -98,6 +99,12 @@ async function create(companyId, { name, cpf, email, password, rules }) {
       email_bindex: generateBindex(email),
       password_hash: passwordHash,
       rules: Number.isInteger(rules) ? rules : 0,
+      // A senha definida aqui é sempre temporária: só o admin a conhece, e o
+      // usuário é obrigado a trocá-la antes de usar o sistema (decisão de
+      // segurança — admin não deve deter a senha de uso contínuo de
+      // ninguém). Ver update() abaixo: só o próprio usuário pode alterar
+      // senha depois de criado.
+      must_change_password: true,
     });
     return toDTO(user);
   } catch (err) {
@@ -116,6 +123,13 @@ async function update(companyId, id, auth, payload) {
     throw new AppError('Permissão insuficiente', 403);
   }
 
+  // Nem admin pode definir a senha de outro usuário (só na criação, como
+  // senha temporária) — evita que um admin conheça/redefina a senha de uso
+  // contínuo de alguém e consiga logar como essa pessoa sem ela saber.
+  if (payload.password !== undefined && !isSelf) {
+    throw new AppError('Somente o próprio usuário pode alterar sua senha', 403);
+  }
+
   const changes = {};
 
   if (payload.name !== undefined) changes.name_encrypted = encryptField(payload.name);
@@ -129,6 +143,9 @@ async function update(companyId, id, auth, payload) {
   }
   if (payload.password !== undefined) {
     changes.password_hash = await hashPassword(payload.password);
+    // Qualquer troca de senha feita pelo próprio usuário (inclusive a
+    // primeira, trocando a senha temporária do admin) encerra a exigência.
+    changes.must_change_password = false;
   }
 
   if (payload.rules !== undefined || payload.isActive !== undefined) {

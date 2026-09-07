@@ -1,9 +1,9 @@
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
 
-function signAccessToken({ userId, companyId, rules }) {
+function signAccessToken({ userId, companyId, rules, mustChangePassword }) {
   return jwt.sign(
-    { sub: userId, company_id: companyId, rules },
+    { sub: userId, company_id: companyId, rules, must_change_password: Boolean(mustChangePassword) },
     env.jwtAccessSecret,
     { expiresIn: env.jwtAccessExpiresIn }
   );

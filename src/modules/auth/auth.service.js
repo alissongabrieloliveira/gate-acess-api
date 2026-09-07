@@ -41,7 +41,12 @@ async function login({ email, password, ipAddress, userAgent }) {
     throw new AppError('Credenciais inválidas', 401);
   }
 
-  const accessToken = signAccessToken({ userId: user.id, companyId: user.company_id, rules: user.rules });
+  const accessToken = signAccessToken({
+    userId: user.id,
+    companyId: user.company_id,
+    rules: user.rules,
+    mustChangePassword: user.must_change_password,
+  });
   const { raw: refreshTokenRaw, hash: refreshTokenHash } = generateRefreshToken();
   const expiresAt = refreshExpiresAt();
 
@@ -113,7 +118,12 @@ async function refresh({ refreshTokenRaw, ipAddress, userAgent }) {
     await repository.revokeRefreshToken(record.id, trx);
   });
 
-  const accessToken = signAccessToken({ userId: user.id, companyId: user.company_id, rules: user.rules });
+  const accessToken = signAccessToken({
+    userId: user.id,
+    companyId: user.company_id,
+    rules: user.rules,
+    mustChangePassword: user.must_change_password,
+  });
 
   return { accessToken, refreshTokenRaw: newRefreshTokenRaw, refreshExpiresAt: expiresAt };
 }
