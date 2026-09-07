@@ -1,0 +1,42 @@
+# Ambiente de desenvolvimento local — substitui o `docker run` manual do
+# Postgres e o `node src/server.js` manual (ver memoria.md). O frontend
+# continua rodando via `npm run dev` (hot-reload), não entra aqui.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: portaria-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: portaria_admin
+      POSTGRES_PASSWORD: portaria_dev_pw
+      POSTGRES_DB: portaria
+    ports:
+      - '5432:5432'
+    volumes:
+      - portaria_pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    container_name: portaria-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Dentro da rede do Compose o Postgres é alcançado pelo nome do
+      # serviço (`db`), não por `localhost` — só essa variável precisa de
+      # override, o resto do .env continua valendo como está.
+      DATABASE_URL: postgres://portaria_admin:portaria_dev_pw@db:5432/portaria
+    ports:
+      - '3333:3333'
+    volumes:
+      # Bind mount: preserva as fotos já enviadas (backend/uploads/) entre
+      # rebuilds/restarts do container.
+      - ./uploads:/app/uploads
+    depends_on:
+      - db
+
+volumes:
+  # Nome explícito: se um volume `portaria_pgdata` já existir (criado pelo
+  # container manual documentado em memoria.md), o Compose reaproveita os
+  # dados em vez de começar do zero.
+  portaria_pgdata:
+    name: portaria_pgdata
