@@ -45,10 +45,59 @@ if (nodeEnv === 'production' && !process.env.CORS_ORIGIN) {
   );
 }
 
-const fieldEncryptionKey = Buffer.from(required('FIELD_ENCRYPTION_KEY'), 'base64');
+// Estes são os valores EXATOS commitados em backend/.env.test — públicos no
+// histórico do git de propósito, já que são só pra teste (ver
+// tests/setupEnv.js). Usar qualquer um deles em produção seria uma falha de
+// segurança crítica e silenciosa: qualquer pessoa com acesso ao repositório
+// já teria a "chave secreta". Bloqueado só em produção — em dev/test são
+// exatamente os valores esperados.
+const KNOWN_TEST_VALUES = {
+  JWT_ACCESS_SECRET: 'test-only-access-secret-nao-usar-em-producao',
+  BINDEX_PEPPER: 'test-only-bindex-pepper-nao-usar-em-producao',
+  FIELD_ENCRYPTION_KEY: '6egsnHgAeZcxqwOyLGfN8j0Bw1vhiG38NQZ9nEQO2QI=',
+  SUPABASE_SERVICE_ROLE_KEY: 'test-only-fake-service-role-key',
+};
+
+function assertNotKnownTestValue(name, value) {
+  if (nodeEnv === 'production' && value === KNOWN_TEST_VALUES[name]) {
+    throw new Error(
+      `${name} está usando o valor de teste commitado em .env.test (público no histórico do git) — ` +
+        'isso é uma falha crítica de segurança em produção. Gere um valor novo, real, fora do controle de versão.'
+    );
+  }
+}
+
+// Pega segredo curto/previsível (ex.: "secret123", "changeme") em qualquer
+// ambiente — os segredos de dev já configurados neste projeto têm 64
+// caracteres, bem acima do mínimo, então isso nunca deveria incomodar um
+// setup legítimo.
+const MIN_SECRET_LENGTH = 32;
+function assertMinLength(name, value) {
+  if (value.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      `${name} é fraco demais (${value.length} caracteres, mínimo ${MIN_SECRET_LENGTH}) — gere um valor ` +
+        'novo com entropia real (ex.: `openssl rand -base64 32`), nunca um valor curto ou previsível.'
+    );
+  }
+}
+
+const jwtAccessSecret = required('JWT_ACCESS_SECRET');
+assertMinLength('JWT_ACCESS_SECRET', jwtAccessSecret);
+assertNotKnownTestValue('JWT_ACCESS_SECRET', jwtAccessSecret);
+
+const bindexPepper = required('BINDEX_PEPPER');
+assertMinLength('BINDEX_PEPPER', bindexPepper);
+assertNotKnownTestValue('BINDEX_PEPPER', bindexPepper);
+
+const fieldEncryptionKeyRaw = required('FIELD_ENCRYPTION_KEY');
+assertNotKnownTestValue('FIELD_ENCRYPTION_KEY', fieldEncryptionKeyRaw);
+const fieldEncryptionKey = Buffer.from(fieldEncryptionKeyRaw, 'base64');
 if (fieldEncryptionKey.length !== 32) {
   throw new Error('FIELD_ENCRYPTION_KEY deve decodificar (base64) para exatamente 32 bytes');
 }
+
+const supabaseServiceRoleKey = required('SUPABASE_SERVICE_ROLE_KEY');
+assertNotKnownTestValue('SUPABASE_SERVICE_ROLE_KEY', supabaseServiceRoleKey);
 
 module.exports = {
   nodeEnv,
@@ -56,7 +105,7 @@ module.exports = {
   databaseUrl: required('DATABASE_URL'),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
 
-  jwtAccessSecret: required('JWT_ACCESS_SECRET'),
+  jwtAccessSecret,
   jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
   refreshTokenExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 
@@ -65,7 +114,7 @@ module.exports = {
   // (ALTER DATABASE ... SET app.bindex_pepper = '...'), já que o blind index é
   // gerado aqui no Node (ver src/utils/bindex.js) para evitar um round-trip
   // extra ao banco só para calcular o hash de busca.
-  bindexPepper: required('BINDEX_PEPPER'),
+  bindexPepper,
 
   // Fotos de people/vehicles vivem no Supabase Storage (ver
   // src/utils/supabaseStorage.js) — sem fallback em disco local, por isso
@@ -73,7 +122,7 @@ module.exports = {
   // nenhuma. Service Role Key (não a anon/public) — precisa bypassar RLS do
   // Storage, já que a autorização já é feita pela própria API.
   supabaseUrl: required('SUPABASE_URL'),
-  supabaseServiceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
+  supabaseServiceRoleKey,
   supabaseStorageBucket: process.env.SUPABASE_STORAGE_BUCKET || 'uploads',
 
   // E-mail de recuperação de senha (ver src/utils/email.js) — OPCIONAL, ao
