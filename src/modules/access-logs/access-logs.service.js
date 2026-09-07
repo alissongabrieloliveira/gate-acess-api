@@ -3,7 +3,9 @@ const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const repository = require('./access-logs.repository');
 const peopleRepository = require('../people/people.repository');
+const peopleService = require('../people/people.service');
 const vehiclesRepository = require('../vehicles/vehicles.repository');
+const vehiclesService = require('../vehicles/vehicles.service');
 const gatesRepository = require('../gates/gates.repository');
 const sectorsRepository = require('../sectors/sectors.repository');
 
@@ -48,7 +50,17 @@ function toDTO(log) {
   };
 }
 
-async function list(companyId, { page, limit, status, personId, from, to } = {}) {
+/**
+ * `search` (?search=, "CPF, Nome ou Placa") não existe como coluna em
+ * access_logs — só person_id/vehicle_id. Resolve primeiro quais pessoas e
+ * veículos batem com o termo (peopleService/vehiclesService.searchIds, que
+ * já sabem decriptar/comparar cada um do jeito certo), depois filtra
+ * access_logs por WHERE person_id IN (...) OR vehicle_id IN (...) — a
+ * paginação em si continua via SQL LIMIT/OFFSET, só o "quem bate" precisa
+ * de um passo a mais. Se a busca não encontrar nenhuma pessoa nem veículo,
+ * retorna vazio sem nem consultar access_logs.
+ */
+async function list(companyId, { page, limit, status, personId, from, to, search } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
   const offset = (safePage - 1) * safeLimit;
@@ -58,6 +70,18 @@ async function list(companyId, { page, limit, status, personId, from, to } = {})
     from: from ? new Date(from) : undefined,
     to: to ? new Date(to) : undefined,
   };
+
+  if (search && search.trim()) {
+    const [personIds, vehicleIds] = await Promise.all([
+      peopleService.searchIds(companyId, search),
+      vehiclesService.searchIds(companyId, search),
+    ]);
+    if (!personIds.length && !vehicleIds.length) {
+      return { data: [], pagination: { page: safePage, limit: safeLimit, total: 0 } };
+    }
+    filters.personIds = personIds;
+    filters.vehicleIds = vehicleIds;
+  }
 
   const [rows, totalRow] = await Promise.all([
     repository.listByCompany(companyId, { limit: safeLimit, offset, ...filters }),

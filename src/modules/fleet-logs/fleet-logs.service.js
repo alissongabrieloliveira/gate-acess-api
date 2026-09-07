@@ -3,9 +3,11 @@ const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const repository = require('./fleet-logs.repository');
 const peopleRepository = require('../people/people.repository');
+const peopleService = require('../people/people.service');
 const vehiclesRepository = require('../vehicles/vehicles.repository');
+const vehiclesService = require('../vehicles/vehicles.service');
 const gatesRepository = require('../gates/gates.repository');
-const { normalizePlate } = require('../vehicles/vehicles.service');
+const { normalizePlate } = vehiclesService;
 
 const CHECK_VIOLATION = '23514';
 const STATUS = { ON_TRIP: 'ON_TRIP', RETURNED: 'RETURNED' };
@@ -45,7 +47,16 @@ function toDTO(log) {
   };
 }
 
-async function list(companyId, { page, limit, status, vehicleId, from, to } = {}) {
+/**
+ * `search` (?search=, "placa, motorista ou destino"): placa e motorista não
+ * são colunas de fleet_logs (são vehicle_id/driver_id) — resolve primeiro
+ * quais veículos/pessoas batem (vehiclesService/peopleService.searchIds),
+ * igual ao mesmo problema em access-logs. `destination`, ao contrário,
+ * É uma coluna de texto livre de fleet_logs, então entra direto como ILIKE
+ * — por isso não dá pra usar o mesmo atalho "sem match, retorna vazio" do
+ * access-logs (destino pode bater mesmo sem nenhum motorista/veículo).
+ */
+async function list(companyId, { page, limit, status, vehicleId, from, to, search } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
   const offset = (safePage - 1) * safeLimit;
@@ -55,6 +66,17 @@ async function list(companyId, { page, limit, status, vehicleId, from, to } = {}
     from: from ? new Date(from) : undefined,
     to: to ? new Date(to) : undefined,
   };
+
+  if (search && search.trim()) {
+    const term = search.trim();
+    const [driverIds, vehicleIds] = await Promise.all([
+      peopleService.searchIds(companyId, term),
+      vehiclesService.searchIds(companyId, term),
+    ]);
+    filters.driverIds = driverIds;
+    filters.vehicleIds = vehicleIds;
+    filters.destinationTerm = term;
+  }
 
   const [rows, totalRow] = await Promise.all([
     repository.listByCompany(companyId, { limit: safeLimit, offset, ...filters }),

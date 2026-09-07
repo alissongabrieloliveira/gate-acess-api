@@ -33,22 +33,34 @@ function findByIdAndCompany(id, companyId) {
   return baseQuery(companyId).where({ id }).first();
 }
 
-function applyFilters(query, { status, personId, from, to }) {
+// personIds/vehicleIds vêm de access-logs.service.js (resolvidos via
+// peopleService.searchIds/vehiclesService.searchIds a partir de ?search=) —
+// casam em OR entre si (a pessoa OU o veículo bate com o termo buscado), mas
+// em AND com os demais filtros. Só entram na query quando o array tem pelo
+// menos um id (o service já resolve o caso de busca sem nenhum match antes
+// de chegar aqui, retornando vazio sem nem consultar o banco).
+function applyFilters(query, { status, personId, from, to, personIds, vehicleIds }) {
   if (status) query.andWhere({ status });
   if (personId !== undefined) query.andWhere({ person_id: personId });
   if (from) query.andWhere('entry_time', '>=', from);
   if (to) query.andWhere('entry_time', '<=', to);
+  if (personIds?.length || vehicleIds?.length) {
+    query.andWhere((qb) => {
+      if (personIds?.length) qb.orWhereIn('person_id', personIds);
+      if (vehicleIds?.length) qb.orWhereIn('vehicle_id', vehicleIds);
+    });
+  }
   return query;
 }
 
-function listByCompany(companyId, { limit, offset, status, personId, from, to }) {
+function listByCompany(companyId, { limit, offset, status, personId, from, to, personIds, vehicleIds }) {
   const query = baseQuery(companyId).orderBy('entry_time', 'desc').limit(limit).offset(offset);
-  return applyFilters(query, { status, personId, from, to });
+  return applyFilters(query, { status, personId, from, to, personIds, vehicleIds });
 }
 
-function countByCompany(companyId, { status, personId, from, to }) {
+function countByCompany(companyId, { status, personId, from, to, personIds, vehicleIds }) {
   const query = db('access_logs').where({ company_id: companyId }).whereNull('deleted_at').count('id as count');
-  return applyFilters(query, { status, personId, from, to }).first();
+  return applyFilters(query, { status, personId, from, to, personIds, vehicleIds }).first();
 }
 
 // Casa com o predicado do índice parcial idx_access_logs_active (company_id

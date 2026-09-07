@@ -33,6 +33,16 @@ function listByCompany(companyId, { limit, offset, personType }) {
   return query;
 }
 
+// Sem limit/offset: usada pela busca por nome/CPF/telefone (?search=), que
+// precisa decriptar e filtrar em memória (name/cpf/phone são colunas
+// *_encrypted, não dá pra fazer ILIKE no banco) antes de paginar o
+// resultado já filtrado — ver people.service.js.
+function listAllByCompany(companyId, { personType }) {
+  const query = baseQuery(companyId).orderBy('id', 'asc');
+  if (personType !== undefined) query.andWhere({ person_type: personType });
+  return query;
+}
+
 function countByCompany(companyId, { personType }) {
   const query = db('people').where({ company_id: companyId }).whereNull('deleted_at').count('id as count');
   if (personType !== undefined) query.andWhere({ person_type: personType });
@@ -60,6 +70,7 @@ module.exports = {
   findByIdAndCompany,
   findByCpfBindex,
   listByCompany,
+  listAllByCompany,
   countByCompany,
   insert,
   update,

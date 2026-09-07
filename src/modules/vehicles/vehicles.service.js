@@ -64,7 +64,7 @@ function toDTO(vehicle) {
  * (query param `identification`) — útil para checar na portaria se um veículo
  * já está cadastrado/bloqueado antes de duplicar, ou pra achar rápido um
  * veículo de frota própria pelo número interno, sem paginar tudo. */
-async function list(companyId, { page, limit, vehicleType, operationStatus, plate, identification } = {}) {
+async function list(companyId, { page, limit, vehicleType, operationStatus, plate, identification, search } = {}) {
   if (plate) {
     const vehicle = await repository.findByPlate(normalizePlate(plate), companyId);
     return {
@@ -86,16 +86,30 @@ async function list(companyId, { page, limit, vehicleType, operationStatus, plat
   const offset = (safePage - 1) * safeLimit;
   const parsedType = vehicleType !== undefined ? Number(vehicleType) : undefined;
   assertValidVehicleType(parsedType);
+  const searchTerm = search?.trim() || undefined;
 
   const [rows, totalRow] = await Promise.all([
-    repository.listByCompany(companyId, { limit: safeLimit, offset, vehicleType: parsedType, operationStatus }),
-    repository.countByCompany(companyId, { vehicleType: parsedType, operationStatus }),
+    repository.listByCompany(companyId, {
+      limit: safeLimit,
+      offset,
+      vehicleType: parsedType,
+      operationStatus,
+      search: searchTerm,
+    }),
+    repository.countByCompany(companyId, { vehicleType: parsedType, operationStatus, search: searchTerm }),
   ]);
 
   return {
     data: rows.map(toDTO),
     pagination: { page: safePage, limit: safeLimit, total: Number(totalRow.count) },
   };
+}
+
+// Resolve ids de veículos cuja placa bate com um termo livre — reaproveitado
+// por access-logs/fleet-logs pra buscar "por placa" sem duplicar a lógica de
+// comparação (placa fica em claro no banco, então basta ILIKE).
+function searchIds(companyId, term) {
+  return repository.findIdsByPlateLike(companyId, term);
 }
 
 async function getById(companyId, id) {
@@ -202,4 +216,4 @@ async function setPhoto(auth, id, photoUrl) {
   return toDTO(vehicle);
 }
 
-module.exports = { list, getById, create, update, setBlocked, setPhoto, normalizePlate, VEHICLE_TYPES };
+module.exports = { list, getById, create, update, setBlocked, setPhoto, searchIds, normalizePlate, VEHICLE_TYPES };

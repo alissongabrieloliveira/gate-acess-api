@@ -34,22 +34,35 @@ function findByIdAndCompany(id, companyId) {
   return baseQuery(companyId).where({ id }).first();
 }
 
-function applyFilters(query, { status, vehicleId, from, to }) {
+// driverIds/vehicleIds/destinationTerm vêm de fleet-logs.service.js
+// (?search=, "placa, motorista ou destino") — casam em OR entre si, mas em
+// AND com os demais filtros. destination é a única coluna de texto livre
+// nesta tabela (as outras duas buscas passam por people/vehicles), então
+// sempre entra como ILIKE quando há termo buscado, mesmo que nenhuma
+// pessoa/veículo tenha batido.
+function applyFilters(query, { status, vehicleId, from, to, driverIds, vehicleIds, destinationTerm }) {
   if (status) query.andWhere({ status });
   if (vehicleId !== undefined) query.andWhere({ vehicle_id: vehicleId });
   if (from) query.andWhere('departure_time', '>=', from);
   if (to) query.andWhere('departure_time', '<=', to);
+  if (driverIds?.length || vehicleIds?.length || destinationTerm) {
+    query.andWhere((qb) => {
+      if (driverIds?.length) qb.orWhereIn('driver_id', driverIds);
+      if (vehicleIds?.length) qb.orWhereIn('vehicle_id', vehicleIds);
+      if (destinationTerm) qb.orWhereILike('destination', `%${destinationTerm}%`);
+    });
+  }
   return query;
 }
 
-function listByCompany(companyId, { limit, offset, status, vehicleId, from, to }) {
+function listByCompany(companyId, { limit, offset, status, vehicleId, from, to, driverIds, vehicleIds, destinationTerm }) {
   const query = baseQuery(companyId).orderBy('departure_time', 'desc').limit(limit).offset(offset);
-  return applyFilters(query, { status, vehicleId, from, to });
+  return applyFilters(query, { status, vehicleId, from, to, driverIds, vehicleIds, destinationTerm });
 }
 
-function countByCompany(companyId, { status, vehicleId, from, to }) {
+function countByCompany(companyId, { status, vehicleId, from, to, driverIds, vehicleIds, destinationTerm }) {
   const query = db('fleet_logs').where({ company_id: companyId }).whereNull('deleted_at').count('id as count');
-  return applyFilters(query, { status, vehicleId, from, to }).first();
+  return applyFilters(query, { status, vehicleId, from, to, driverIds, vehicleIds, destinationTerm }).first();
 }
 
 // Casa com o predicado do índice parcial idx_fleet_logs_on_trip (company_id

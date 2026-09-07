@@ -33,12 +33,21 @@ function assertValidPersonType(personType) {
   }
 }
 
+// Compartilhado entre list() (busca paginada) e searchIds() (usado por
+// access-logs/fleet-logs pra resolver "essa pessoa bate com o termo
+// buscado?"). `term`/`digitsTerm` já vêm normalizados pelo chamador.
+function matchesSearch(person, term, digitsTerm) {
+  if (person.name?.toLowerCase().includes(term)) return true;
+  if (!digitsTerm) return false;
+  return person.cpf?.includes(digitsTerm) || person.phone?.includes(digitsTerm);
+}
+
 /**
  * Busca direta por CPF (query param `cpf`) vira um lookup por cpf_bindex — o mesmo
  * padrão do login — em vez de decriptar toda a lista para filtrar. Útil na portaria
  * para checar se um visitante já está cadastrado/bloqueado antes de criar duplicata.
  */
-async function list(companyId, { page, limit, personType, cpf } = {}) {
+async function list(companyId, { page, limit, personType, cpf, search } = {}) {
   if (cpf) {
     const person = await repository.findByCpfBindex(generateBindex(cpf), companyId);
     return {
@@ -49,10 +58,31 @@ async function list(companyId, { page, limit, personType, cpf } = {}) {
 
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
-  const offset = (safePage - 1) * safeLimit;
   const parsedType = personType !== undefined ? Number(personType) : undefined;
   assertValidPersonType(parsedType);
 
+  // Busca por nome/CPF/telefone (?search=): name/cpf/phone são colunas
+  // *_encrypted, então não dá pra fazer ILIKE no banco — busca teria que
+  // decriptar mesmo assim. Como a busca precisa achar a pessoa em qualquer
+  // página (não só na que já está carregada no cliente), decripta TODAS as
+  // pessoas da empresa, filtra em memória e só então pagina o resultado já
+  // filtrado. Aceitável pro volume de dados de uma portaria (dezenas a
+  // poucas centenas de pessoas por empresa) — ver memoria.md.
+  if (search && search.trim()) {
+    const term = search.trim().toLowerCase();
+    const digitsTerm = term.replace(/\D/g, '');
+
+    const rows = await repository.listAllByCompany(companyId, { personType: parsedType });
+    const matched = rows.map(toDTO).filter((person) => matchesSearch(person, term, digitsTerm));
+
+    const offset = (safePage - 1) * safeLimit;
+    return {
+      data: matched.slice(offset, offset + safeLimit),
+      pagination: { page: safePage, limit: safeLimit, total: matched.length },
+    };
+  }
+
+  const offset = (safePage - 1) * safeLimit;
   const [rows, totalRow] = await Promise.all([
     repository.listByCompany(companyId, { limit: safeLimit, offset, personType: parsedType }),
     repository.countByCompany(companyId, { personType: parsedType }),
@@ -175,4 +205,21 @@ async function setPhoto(auth, id, photoUrl) {
   return toDTO(person);
 }
 
-module.exports = { list, getById, create, update, setBlocked, setPhoto, PERSON_TYPES };
+// Resolve ids de pessoas (de qualquer tipo) cujo nome/CPF/telefone bate com
+// um termo livre — reaproveitado por access-logs (busca por CPF/Nome) e
+// fleet-logs (busca por motorista) pra não duplicar a lógica de decriptar +
+// comparar. Mesmo custo do branch `search` de list() (decripta todas as
+// pessoas da empresa), aceitável pro volume de dados de uma portaria.
+async function searchIds(companyId, rawTerm) {
+  const term = String(rawTerm ?? '').trim().toLowerCase();
+  if (!term) return [];
+  const digitsTerm = term.replace(/\D/g, '');
+
+  const rows = await repository.listAllByCompany(companyId, {});
+  return rows
+    .map(toDTO)
+    .filter((person) => matchesSearch(person, term, digitsTerm))
+    .map((person) => person.id);
+}
+
+module.exports = { list, getById, create, update, setBlocked, setPhoto, searchIds, PERSON_TYPES };
