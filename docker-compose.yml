@@ -25,6 +25,14 @@ services:
       # serviço (`db`), não por `localhost` — só essa variável precisa de
       # override, o resto do .env continua valendo como está.
       DATABASE_URL: postgres://portaria_admin:portaria_dev_pw@db:5432/portaria
+      # Explícito de propósito: o Dockerfile builda a imagem com
+      # NODE_ENV=production (padrão pensado pra um deploy de verdade), mas
+      # este compose é só pra desenvolvimento local (ver comentário no topo
+      # do arquivo) — sem este override, o valor viria do .env por
+      # acidente (o mesmo arquivo usado tanto aqui quanto fora do Docker),
+      # o que já causou confusão antes. Fixado aqui pra nunca depender de o
+      # .env "acontecer" de ter o valor certo.
+      NODE_ENV: development
     ports:
       - '3333:3333'
     depends_on:

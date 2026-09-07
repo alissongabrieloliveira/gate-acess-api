@@ -8,13 +8,33 @@ function required(name) {
   return value;
 }
 
+// Sem NODE_ENV setado, o padrão continua "development" (mesma convenção do
+// Node/do ecossistema — a falha mais segura, já que "esquecer de setar"
+// nunca deveria LIGAR hardening de produção por acidente num ambiente que
+// o desenvolvedor acha que é local). O que essa validação pega é o erro
+// oposto e mais perigoso: um valor SETADO mas digitado errado (ex.: "prod"
+// em vez de "production", ou "Production" com maiúscula) — sem essa
+// checagem, `nodeEnv === 'production'` (usado pra decidir o `secure` do
+// cookie de refresh em auth.controller.js) falha silenciosamente pra
+// "false", e o cookie de sessão sai sem exigir HTTPS em produção, sem
+// nenhum aviso de que algo está errado.
+const VALID_NODE_ENVS = ['development', 'test', 'production'];
+const nodeEnv = process.env.NODE_ENV || 'development';
+if (!VALID_NODE_ENVS.includes(nodeEnv)) {
+  throw new Error(
+    `NODE_ENV inválido: "${nodeEnv}" — use exatamente um de: ${VALID_NODE_ENVS.join(', ')}. ` +
+      'Um valor errado aqui (ex.: "prod" em vez de "production") faz recursos de segurança que dependem ' +
+      'dele (cookie de refresh com "secure") ficarem desligados sem nenhum aviso.'
+  );
+}
+
 const fieldEncryptionKey = Buffer.from(required('FIELD_ENCRYPTION_KEY'), 'base64');
 if (fieldEncryptionKey.length !== 32) {
   throw new Error('FIELD_ENCRYPTION_KEY deve decodificar (base64) para exatamente 32 bytes');
 }
 
 module.exports = {
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   port: Number(process.env.PORT) || 3333,
   databaseUrl: required('DATABASE_URL'),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
