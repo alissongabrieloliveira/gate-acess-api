@@ -1,6 +1,7 @@
 const AppError = require('../../utils/AppError');
 const repository = require('./vehicles.repository');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
+const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -53,11 +54,20 @@ function toDTO(vehicle) {
     operationStatus: vehicle.operation_status,
     isBlocked: vehicle.is_blocked,
     blockReason: vehicle.block_reason,
+    // Ainda é o CAMINHO cru no bucket do Supabase aqui, não uma URL de
+    // verdade — só vira URL assinada em singleDTO()/attachSignedPhotoUrls()
+    // (mesmo critério de people.service.js). Nunca devolver toDTO() direto
+    // pro controller sem passar por isso.
     photoUrl: vehicle.photo_url,
     identificationCode: vehicle.identification_code,
     createdAt: vehicle.created_at,
     updatedAt: vehicle.updated_at,
   };
+}
+
+async function singleDTO(vehicle) {
+  const [dto] = await attachSignedPhotoUrls([toDTO(vehicle)]);
+  return dto;
 }
 
 /** Busca exata por placa (query param `plate`) ou por código de identificação
@@ -68,7 +78,7 @@ async function list(companyId, { page, limit, vehicleType, operationStatus, plat
   if (plate) {
     const vehicle = await repository.findByPlate(normalizePlate(plate), companyId);
     return {
-      data: vehicle ? [toDTO(vehicle)] : [],
+      data: vehicle ? await attachSignedPhotoUrls([toDTO(vehicle)]) : [],
       pagination: { page: 1, limit: 1, total: vehicle ? 1 : 0 },
     };
   }
@@ -76,7 +86,7 @@ async function list(companyId, { page, limit, vehicleType, operationStatus, plat
   if (identification) {
     const vehicle = await repository.findByIdentificationCode(identification, companyId);
     return {
-      data: vehicle ? [toDTO(vehicle)] : [],
+      data: vehicle ? await attachSignedPhotoUrls([toDTO(vehicle)]) : [],
       pagination: { page: 1, limit: 1, total: vehicle ? 1 : 0 },
     };
   }
@@ -100,7 +110,7 @@ async function list(companyId, { page, limit, vehicleType, operationStatus, plat
   ]);
 
   return {
-    data: rows.map(toDTO),
+    data: await attachSignedPhotoUrls(rows.map(toDTO)),
     pagination: { page: safePage, limit: safeLimit, total: Number(totalRow.count) },
   };
 }
@@ -117,7 +127,7 @@ async function getById(companyId, id) {
   if (!vehicle) {
     throw new AppError('Veículo não encontrado', 404);
   }
-  return toDTO(vehicle);
+  return singleDTO(vehicle);
 }
 
 async function create(auth, { vehicleType, licensePlate, brand, model, color, identificationCode }) {
@@ -143,7 +153,7 @@ async function create(auth, { vehicleType, licensePlate, brand, model, color, id
         trx
       )
     );
-    return toDTO(vehicle);
+    return singleDTO(vehicle);
   } catch (err) {
     throw mapUniqueViolation(err);
   }
@@ -175,7 +185,7 @@ async function update(auth, id, payload) {
     if (!vehicle) {
       throw new AppError('Veículo não encontrado', 404);
     }
-    return toDTO(vehicle);
+    return singleDTO(vehicle);
   } catch (err) {
     throw mapUniqueViolation(err);
   }
@@ -203,17 +213,25 @@ async function setBlocked(auth, id, { isBlocked, reason }) {
   if (!vehicle) {
     throw new AppError('Veículo não encontrado', 404);
   }
-  return toDTO(vehicle);
+  return singleDTO(vehicle);
 }
 
-async function setPhoto(auth, id, photoUrl) {
-  const vehicle = await withAuthTransaction(auth, (trx) =>
-    repository.update(id, auth.companyId, { photo_url: photoUrl }, trx)
-  );
-  if (!vehicle) {
+// Busca a linha crua primeiro (não o DTO) pra achar o caminho antigo no
+// bucket sem vazar esse caminho interno pra fora da API — mesmo critério de
+// people.service.js#setPhoto. Apagar a foto antiga é best-effort.
+async function setPhoto(auth, id, photoPath) {
+  const existing = await repository.findByIdAndCompany(id, auth.companyId);
+  if (!existing) {
     throw new AppError('Veículo não encontrado', 404);
   }
-  return toDTO(vehicle);
+  if (existing.photo_url) {
+    await deleteStoragePhoto(existing.photo_url);
+  }
+
+  const vehicle = await withAuthTransaction(auth, (trx) =>
+    repository.update(id, auth.companyId, { photo_url: photoPath }, trx)
+  );
+  return singleDTO(vehicle);
 }
 
 module.exports = { list, getById, create, update, setBlocked, setPhoto, searchIds, normalizePlate, VEHICLE_TYPES };

@@ -29,4 +29,13 @@ module.exports = {
   // gerado aqui no Node (ver src/utils/bindex.js) para evitar um round-trip
   // extra ao banco só para calcular o hash de busca.
   bindexPepper: required('BINDEX_PEPPER'),
+
+  // Fotos de people/vehicles vivem no Supabase Storage (ver
+  // src/utils/supabaseStorage.js) — sem fallback em disco local, por isso
+  // são obrigatórias: sem elas a app não tem como servir/receber foto
+  // nenhuma. Service Role Key (não a anon/public) — precisa bypassar RLS do
+  // Storage, já que a autorização já é feita pela própria API.
+  supabaseUrl: required('SUPABASE_URL'),
+  supabaseServiceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
+  supabaseStorageBucket: process.env.SUPABASE_STORAGE_BUCKET || 'uploads',
 };

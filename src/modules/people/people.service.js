@@ -3,6 +3,7 @@ const repository = require('./people.repository');
 const { generateBindex } = require('../../utils/bindex');
 const { encryptField, decryptField } = require('../../utils/crypto');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
+const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -19,12 +20,22 @@ function toDTO(person) {
     cpf: person.cpf_encrypted ? decryptField(person.cpf_encrypted) : null,
     rg: person.rg_encrypted ? decryptField(person.rg_encrypted) : null,
     phone: person.phone_encrypted ? decryptField(person.phone_encrypted) : null,
+    // Ainda é o CAMINHO cru no bucket do Supabase aqui, não uma URL de
+    // verdade — só vira URL assinada em singleDTO()/attachSignedPhotoUrls(),
+    // chamado por quem devolve o DTO pra fora (list/getById/create/update/
+    // setBlocked/setPhoto). Nunca devolver o resultado de toDTO() direto pro
+    // controller sem passar por isso.
     photoUrl: person.photo_url,
     isBlocked: person.is_blocked,
     blockReason: person.block_reason,
     createdAt: person.created_at,
     updatedAt: person.updated_at,
   };
+}
+
+async function singleDTO(person) {
+  const [dto] = await attachSignedPhotoUrls([toDTO(person)]);
+  return dto;
 }
 
 function assertValidPersonType(personType) {
@@ -51,7 +62,7 @@ async function list(companyId, { page, limit, personType, cpf, search, blocked }
   if (cpf) {
     const person = await repository.findByCpfBindex(generateBindex(cpf), companyId);
     return {
-      data: person ? [toDTO(person)] : [],
+      data: person ? await attachSignedPhotoUrls([toDTO(person)]) : [],
       pagination: { page: 1, limit: 1, total: person ? 1 : 0 },
     };
   }
@@ -80,7 +91,7 @@ async function list(companyId, { page, limit, personType, cpf, search, blocked }
 
     const offset = (safePage - 1) * safeLimit;
     return {
-      data: matched.slice(offset, offset + safeLimit),
+      data: await attachSignedPhotoUrls(matched.slice(offset, offset + safeLimit)),
       pagination: { page: safePage, limit: safeLimit, total: matched.length },
     };
   }
@@ -92,7 +103,7 @@ async function list(companyId, { page, limit, personType, cpf, search, blocked }
   ]);
 
   return {
-    data: rows.map(toDTO),
+    data: await attachSignedPhotoUrls(rows.map(toDTO)),
     pagination: { page: safePage, limit: safeLimit, total: Number(totalRow.count) },
   };
 }
@@ -102,7 +113,7 @@ async function getById(companyId, id) {
   if (!person) {
     throw new AppError('Pessoa não encontrada', 404);
   }
-  return toDTO(person);
+  return singleDTO(person);
 }
 
 async function create(auth, { personType, name, cpf, rg, phone, photoUrl }) {
@@ -129,7 +140,7 @@ async function create(auth, { personType, name, cpf, rg, phone, photoUrl }) {
         trx
       )
     );
-    return toDTO(person);
+    return singleDTO(person);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
       throw new AppError('Já existe uma pessoa cadastrada com esse CPF nesta empresa', 409);
@@ -164,7 +175,7 @@ async function update(auth, id, payload) {
     if (!person) {
       throw new AppError('Pessoa não encontrada', 404);
     }
-    return toDTO(person);
+    return singleDTO(person);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
       throw new AppError('Já existe uma pessoa cadastrada com esse CPF nesta empresa', 409);
@@ -195,17 +206,27 @@ async function setBlocked(auth, id, { isBlocked, reason }) {
   if (!person) {
     throw new AppError('Pessoa não encontrada', 404);
   }
-  return toDTO(person);
+  return singleDTO(person);
 }
 
-async function setPhoto(auth, id, photoUrl) {
-  const person = await withAuthTransaction(auth, (trx) =>
-    repository.update(id, auth.companyId, { photo_url: photoUrl }, trx)
-  );
-  if (!person) {
+// Busca a linha crua primeiro (não o DTO) pra achar o caminho antigo no
+// bucket sem nunca vazar esse caminho interno pra fora da API — o DTO só
+// expõe a URL assinada, nunca o caminho cru (ver toDTO() acima). Apagar a
+// foto antiga é best-effort (utils/supabaseStorage.js#deletePhoto nunca
+// lança), então não bloqueia a troca se falhar.
+async function setPhoto(auth, id, photoPath) {
+  const existing = await repository.findByIdAndCompany(id, auth.companyId);
+  if (!existing) {
     throw new AppError('Pessoa não encontrada', 404);
   }
-  return toDTO(person);
+  if (existing.photo_url) {
+    await deleteStoragePhoto(existing.photo_url);
+  }
+
+  const person = await withAuthTransaction(auth, (trx) =>
+    repository.update(id, auth.companyId, { photo_url: photoPath }, trx)
+  );
+  return singleDTO(person);
 }
 
 // Resolve ids de pessoas (de qualquer tipo) cujo nome/CPF/telefone bate com

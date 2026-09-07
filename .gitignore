@@ -19,5 +19,8 @@ Thumbs.db
 # Logs
 *.log
 
-# Uploads (arquivos enviados pelos usuários, não fazem parte do código-fonte)
+# Resíduo de quando os uploads ficavam em disco (agora vão pro Supabase
+# Storage, ver src/utils/supabaseStorage.js) — o diretório físico ainda
+# existe com arquivos de teste antigos, sem uso pelo código; mantido no
+# gitignore só pra nunca acabar comitado por engano.
 uploads/

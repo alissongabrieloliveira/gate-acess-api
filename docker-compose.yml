@@ -27,10 +27,6 @@ services:
       DATABASE_URL: postgres://portaria_admin:portaria_dev_pw@db:5432/portaria
     ports:
       - '3333:3333'
-    volumes:
-      # Bind mount: preserva as fotos já enviadas (backend/uploads/) entre
-      # rebuilds/restarts do container.
-      - ./uploads:/app/uploads
     depends_on:
       - db
 

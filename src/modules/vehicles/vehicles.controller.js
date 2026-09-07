@@ -1,5 +1,6 @@
 const vehiclesService = require('./vehicles.service');
-const { deleteUploadedFile } = require('../../middlewares/upload');
+const { buildPhotoPath } = require('../../middlewares/upload');
+const { uploadPhoto: uploadPhotoToStorage } = require('../../utils/supabaseStorage');
 const AppError = require('../../utils/AppError');
 
 async function list(req, res, next) {
@@ -55,23 +56,15 @@ async function uploadPhoto(req, res, next) {
 
     const vehicleId = Number(req.params.id);
 
-    // Confirma posse ANTES de gravar a nova foto — se o veículo não existir/
-    // não pertencer à empresa, o arquivo que o multer já escreveu em disco
-    // fica órfão, então é apagado aqui antes de propagar o 404.
-    let previous;
-    try {
-      previous = await vehiclesService.getById(req.auth.companyId, vehicleId);
-    } catch (err) {
-      deleteUploadedFile(req.file.path);
-      throw err;
-    }
+    // Confirma posse ANTES de subir a foto pro Storage — se o veículo não
+    // existir/não pertencer à empresa, evita deixar um objeto órfão no
+    // bucket.
+    await vehiclesService.getById(req.auth.companyId, vehicleId);
 
-    const photoUrl = `/uploads/vehicles/${req.file.filename}`;
-    const vehicle = await vehiclesService.setPhoto(req.auth, vehicleId, photoUrl);
+    const photoPath = buildPhotoPath('vehicles', 'vehicle', vehicleId, req.file.mimetype);
+    await uploadPhotoToStorage(photoPath, req.file.buffer, req.file.mimetype);
 
-    if (previous.photoUrl) {
-      deleteUploadedFile(previous.photoUrl);
-    }
+    const vehicle = await vehiclesService.setPhoto(req.auth, vehicleId, photoPath);
 
     return res.status(200).json(vehicle);
   } catch (err) {

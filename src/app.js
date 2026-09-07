@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const env = require('./config/env');
-const { UPLOADS_ROOT } = require('./middlewares/upload');
 const { apiLimiter } = require('./middlewares/rateLimit');
 const authRoutes = require('./modules/auth/auth.routes');
 const citiesRoutes = require('./modules/cities/cities.routes');
@@ -23,11 +22,6 @@ const app = express();
 app.use(cors({ origin: env.corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
-
-// Servidas sem autenticação (URLs geradas pelo próprio servidor, nunca
-// adivinháveis o suficiente pra depender só disso, mas simples o bastante
-// pra esse projeto — ver decisão documentada na memória do projeto).
-app.use('/uploads', express.static(UPLOADS_ROOT));
 
 // Limite geral em toda a API — os endpoints de auth ainda ganham limites
 // próprios mais rígidos (ver auth.routes.js), aplicados em série com este.

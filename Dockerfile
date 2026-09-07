@@ -10,7 +10,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN mkdir -p uploads && chown -R node:node /app
+RUN chown -R node:node /app
 USER node
 EXPOSE 3333
 CMD ["node", "src/server.js"]
