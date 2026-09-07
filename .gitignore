@@ -6,6 +6,9 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+# .env.test tem só valores fixos de teste (não são segredos reais) — commitado
+# de propósito pra `npm test` funcionar sem passo manual extra.
+!.env.test
 
 # Editor/OS
 .vscode/
