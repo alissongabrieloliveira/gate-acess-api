@@ -28,6 +28,23 @@ if (!VALID_NODE_ENVS.includes(nodeEnv)) {
   );
 }
 
+// CORS_ORIGIN cai num fallback de desenvolvimento (localhost:5173) quando
+// não setado — conveniente pra rodar local sem configurar nada, mas
+// perigoso em produção: a API sobe normalmente, só que rejeita (por CORS)
+// toda requisição vinda do domínio real do frontend, e o link de
+// recuperação de senha (auth.service.js#forgotPassword, que reaproveita
+// esta mesma variável) sai apontando pra localhost em vez do domínio de
+// verdade — os dois com erro só visível em produção, não em dev. Exigido
+// explicitamente só quando NODE_ENV=production; em development/test o
+// fallback continua valendo, sem precisar configurar nada pra rodar local.
+if (nodeEnv === 'production' && !process.env.CORS_ORIGIN) {
+  throw new Error(
+    'CORS_ORIGIN é obrigatório com NODE_ENV=production — sem ele a API cai no fallback de ' +
+      'desenvolvimento (http://localhost:5173): o frontend real é bloqueado por CORS, e o link de ' +
+      'recuperação de senha sai apontando pra localhost.'
+  );
+}
+
 const fieldEncryptionKey = Buffer.from(required('FIELD_ENCRYPTION_KEY'), 'base64');
 if (fieldEncryptionKey.length !== 32) {
   throw new Error('FIELD_ENCRYPTION_KEY deve decodificar (base64) para exatamente 32 bytes');
