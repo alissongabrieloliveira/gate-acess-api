@@ -4,22 +4,12 @@ const multer = require('multer');
 const AppError = require('../utils/AppError');
 
 const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
-const VEHICLES_DIR = path.join(UPLOADS_ROOT, 'vehicles');
-fs.mkdirSync(VEHICLES_DIR, { recursive: true });
 
 const ALLOWED_MIME_TYPES = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
   'image/webp': '.webp',
 };
-
-const vehiclePhotoStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, VEHICLES_DIR),
-  filename: (req, file, cb) => {
-    const ext = ALLOWED_MIME_TYPES[file.mimetype] ?? path.extname(file.originalname) ?? '';
-    cb(null, `vehicle-${req.params.id}-${Date.now()}${ext}`);
-  },
-});
 
 function imageFileFilter(req, file, cb) {
   if (!ALLOWED_MIME_TYPES[file.mimetype]) {
@@ -28,11 +18,34 @@ function imageFileFilter(req, file, cb) {
   return cb(null, true);
 }
 
-const uploadVehiclePhoto = multer({
-  storage: vehiclePhotoStorage,
-  fileFilter: imageFileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-});
+/**
+ * Cria um middleware de upload de foto pra uma entidade (vehicles, people...).
+ * Cada entidade grava num subdiretório próprio de uploads/, nomeando o
+ * arquivo como "<prefix>-<id>-<timestamp>.<ext>" (nunca o nome original do
+ * usuário). Extraído pra factory na segunda entidade que precisou do mesmo
+ * fluxo de upload (mesmo critério de extração já usado no resto do projeto).
+ */
+function createPhotoUpload(dirName, prefix) {
+  const dir = path.join(UPLOADS_ROOT, dirName);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, dir),
+    filename: (req, file, cb) => {
+      const ext = ALLOWED_MIME_TYPES[file.mimetype] ?? path.extname(file.originalname) ?? '';
+      cb(null, `${prefix}-${req.params.id}-${Date.now()}${ext}`);
+    },
+  });
+
+  return multer({
+    storage,
+    fileFilter: imageFileFilter,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  });
+}
+
+const uploadVehiclePhoto = createPhotoUpload('vehicles', 'vehicle');
+const uploadPersonPhoto = createPhotoUpload('people', 'person');
 
 /**
  * A `photoUrl` guardada em `vehicles.photo_url` é sempre gerada pelo próprio
@@ -62,4 +75,4 @@ function deleteUploadedFile(value) {
   fs.unlink(target, () => {});
 }
 
-module.exports = { uploadVehiclePhoto, deleteUploadedFile, UPLOADS_ROOT };
+module.exports = { uploadVehiclePhoto, uploadPersonPhoto, deleteUploadedFile, UPLOADS_ROOT };

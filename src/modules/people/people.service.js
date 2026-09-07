@@ -165,4 +165,14 @@ async function setBlocked(auth, id, { isBlocked, reason }) {
   return toDTO(person);
 }
 
-module.exports = { list, getById, create, update, setBlocked, PERSON_TYPES };
+async function setPhoto(auth, id, photoUrl) {
+  const person = await withAuthTransaction(auth, (trx) =>
+    repository.update(id, auth.companyId, { photo_url: photoUrl }, trx)
+  );
+  if (!person) {
+    throw new AppError('Pessoa não encontrada', 404);
+  }
+  return toDTO(person);
+}
+
+module.exports = { list, getById, create, update, setBlocked, setPhoto, PERSON_TYPES };
