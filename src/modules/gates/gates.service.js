@@ -21,15 +21,16 @@ function toDTO(gate) {
   };
 }
 
-async function list(companyId, { page, limit, isActive } = {}) {
+async function list(companyId, { page, limit, isActive, search } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
   const offset = (safePage - 1) * safeLimit;
   const parsedActive = parseBoolean(isActive);
+  const searchTerm = search?.trim() || undefined;
 
   const [rows, totalRow] = await Promise.all([
-    repository.listByCompany(companyId, { limit: safeLimit, offset, isActive: parsedActive }),
-    repository.countByCompany(companyId, { isActive: parsedActive }),
+    repository.listByCompany(companyId, { limit: safeLimit, offset, isActive: parsedActive, search: searchTerm }),
+    repository.countByCompany(companyId, { isActive: parsedActive, search: searchTerm }),
   ]);
 
   return {

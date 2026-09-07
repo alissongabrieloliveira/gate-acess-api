@@ -10,16 +10,26 @@ function findByIdAndCompany(id, companyId) {
   return baseQuery(companyId).where({ id }).first();
 }
 
-function listByCompany(companyId, { limit, offset, isActive }) {
-  const query = baseQuery(companyId).orderBy('id', 'asc').limit(limit).offset(offset);
-  if (isActive !== undefined) query.andWhere({ is_active: isActive });
-  return query;
+// name/description ficam em claro no banco (sem criptografia) — dá pra
+// fazer ILIKE direto, mesmo padrão já usado em vehicles.repository.js.
+function applySearch(query, search) {
+  if (!search) return query;
+  const term = `%${search}%`;
+  return query.andWhere((qb) => {
+    qb.orWhereILike('name', term).orWhereILike('description', term);
+  });
 }
 
-function countByCompany(companyId, { isActive }) {
+function listByCompany(companyId, { limit, offset, isActive, search }) {
+  const query = baseQuery(companyId).orderBy('id', 'asc').limit(limit).offset(offset);
+  if (isActive !== undefined) query.andWhere({ is_active: isActive });
+  return applySearch(query, search);
+}
+
+function countByCompany(companyId, { isActive, search }) {
   const query = db('gates').where({ company_id: companyId }).whereNull('deleted_at').count('id as count');
   if (isActive !== undefined) query.andWhere({ is_active: isActive });
-  return query.first();
+  return applySearch(query, search).first();
 }
 
 // trx opcional (default: db): ver withAuthTransaction.
