@@ -26,11 +26,42 @@ function toDTO(user) {
   };
 }
 
-async function list(companyId, { page, limit } = {}) {
+// Compartilhado com o branch `search` de list() — nome/e-mail comparados
+// como substring, CPF como dígitos contidos no termo buscado.
+function matchesSearch(user, term, digitsTerm) {
+  if (user.name?.toLowerCase().includes(term)) return true;
+  if (user.email?.toLowerCase().includes(term)) return true;
+  if (!digitsTerm) return false;
+  return user.cpf?.includes(digitsTerm);
+}
+
+/**
+ * Busca por nome/CPF/e-mail (?search=): assim como em people, essas colunas
+ * são *_encrypted — sem ILIKE possível no banco. Decripta todos os usuários
+ * da empresa, filtra em memória e só então pagina o resultado já filtrado,
+ * pra achar o usuário em qualquer página (não só a já carregada no
+ * cliente). Aceitável pro volume de operadores de uma portaria (bem menor
+ * que o de people/vehicles).
+ */
+async function list(companyId, { page, limit, search } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
-  const offset = (safePage - 1) * safeLimit;
 
+  if (search && search.trim()) {
+    const term = search.trim().toLowerCase();
+    const digitsTerm = term.replace(/\D/g, '');
+
+    const rows = await repository.listAllByCompany(companyId);
+    const matched = rows.map(toDTO).filter((user) => matchesSearch(user, term, digitsTerm));
+
+    const offset = (safePage - 1) * safeLimit;
+    return {
+      data: matched.slice(offset, offset + safeLimit),
+      pagination: { page: safePage, limit: safeLimit, total: matched.length },
+    };
+  }
+
+  const offset = (safePage - 1) * safeLimit;
   const [rows, totalRow] = await Promise.all([
     repository.listByCompany(companyId, { limit: safeLimit, offset }),
     repository.countByCompany(companyId),

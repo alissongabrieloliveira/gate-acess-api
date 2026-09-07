@@ -31,6 +31,14 @@ function countByCompany(companyId) {
   return db('users').where({ company_id: companyId }).whereNull('deleted_at').count('id as count').first();
 }
 
+// Sem limit/offset: usada pela busca por nome/CPF/e-mail (?search=), que
+// precisa decriptar e filtrar em memória (mesmo motivo de people —
+// name/cpf/email são colunas *_encrypted) antes de paginar o resultado já
+// filtrado. Ver users.service.js.
+function listAllByCompany(companyId) {
+  return db('users').select(COLUMNS).where({ company_id: companyId }).whereNull('deleted_at').orderBy('id', 'asc');
+}
+
 async function insert(data) {
   const [row] = await db('users').insert(data).returning(COLUMNS);
   return row;
@@ -55,6 +63,7 @@ function softDelete(id, companyId) {
 module.exports = {
   findByIdAndCompany,
   listByCompany,
+  listAllByCompany,
   countByCompany,
   insert,
   update,
