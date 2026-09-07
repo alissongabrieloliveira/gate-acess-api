@@ -99,6 +99,21 @@ if (fieldEncryptionKey.length !== 32) {
 const supabaseServiceRoleKey = required('SUPABASE_SERVICE_ROLE_KEY');
 assertNotKnownTestValue('SUPABASE_SERVICE_ROLE_KEY', supabaseServiceRoleKey);
 
+// Sem LOG_LEVEL setado, o default já varia com o ambiente: 'debug' fora de
+// produção (log verboso sem precisar configurar nada pra rodar local) e
+// 'info' em produção (não polui o log de produção com detalhe de debug).
+// Um valor SETADO mas digitado errado (ex.: "verbose", que não é um nível
+// do pino) só falharia dentro do `pino` na hora de logar, não no boot —
+// "cadê os logs?" sem nenhuma pista do motivo. Validado aqui, cedo,
+// com uma mensagem que já aponta a causa.
+const VALID_LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'];
+const logLevel = process.env.LOG_LEVEL || (nodeEnv === 'production' ? 'info' : 'debug');
+if (!VALID_LOG_LEVELS.includes(logLevel)) {
+  throw new Error(
+    `LOG_LEVEL inválido: "${logLevel}" — use exatamente um de: ${VALID_LOG_LEVELS.join(', ')}.`
+  );
+}
+
 module.exports = {
   nodeEnv,
   port: Number(process.env.PORT) || 3333,
@@ -140,4 +155,11 @@ module.exports = {
   emailFrom: process.env.EMAIL_FROM || 'Portaria <no-reply@localhost>',
 
   passwordResetExpiresIn: process.env.PASSWORD_RESET_EXPIRES_IN || '30m',
+
+  logLevel,
+
+  // Rastreamento de erros (ver src/utils/sentry.js) — OPCIONAL, mesmo
+  // critério do SMTP acima: sem DSN configurado, o Sentry simplesmente não
+  // inicializa (não é uma dependência dura como o Supabase é pras fotos).
+  sentryDsn: process.env.SENTRY_DSN || null,
 };

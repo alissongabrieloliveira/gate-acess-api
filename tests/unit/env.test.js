@@ -208,3 +208,63 @@ describe('config/env — bloqueia valores de teste conhecidos em produção', ()
     expect(() => require('../../src/config/env')).not.toThrow();
   });
 });
+
+// Regressão pro item da auditoria "sem observabilidade": um LOG_LEVEL
+// digitado errado (ex.: "verbose", que não é um nível do pino) só falharia
+// dentro do pino na hora de logar, não no boot — "cadê os logs?" sem
+// nenhuma pista do motivo. config/env.js agora valida contra uma lista
+// fechada, igual ao padrão já usado pro NODE_ENV.
+describe('config/env — validação de LOG_LEVEL', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalLogLevel = process.env.LOG_LEVEL;
+  const originalCorsOrigin = process.env.CORS_ORIGIN;
+  const originalJwtSecret = process.env.JWT_ACCESS_SECRET;
+  const originalBindexPepper = process.env.BINDEX_PEPPER;
+  const originalFieldEncryptionKey = process.env.FIELD_ENCRYPTION_KEY;
+  const originalSupabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
+    process.env.LOG_LEVEL = originalLogLevel;
+    process.env.CORS_ORIGIN = originalCorsOrigin;
+    process.env.JWT_ACCESS_SECRET = originalJwtSecret;
+    process.env.BINDEX_PEPPER = originalBindexPepper;
+    process.env.FIELD_ENCRYPTION_KEY = originalFieldEncryptionKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = originalSupabaseKey;
+    jest.resetModules();
+  });
+
+  test.each(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])('aceita "%s"', (value) => {
+    process.env.LOG_LEVEL = value;
+    jest.resetModules();
+    expect(() => require('../../src/config/env')).not.toThrow();
+    expect(require('../../src/config/env').logLevel).toBe(value);
+  });
+
+  test('rejeita valor inválido: "verbose"', () => {
+    process.env.LOG_LEVEL = 'verbose';
+    jest.resetModules();
+    expect(() => require('../../src/config/env')).toThrow(/LOG_LEVEL inválido/);
+  });
+
+  test('sem LOG_LEVEL, fora de produção cai no default "debug"', () => {
+    process.env.NODE_ENV = 'development';
+    process.env.LOG_LEVEL = ''; // ver comentário nos testes de CORS_ORIGIN sobre dotenv
+    jest.resetModules();
+    expect(require('../../src/config/env').logLevel).toBe('debug');
+  });
+
+  test('sem LOG_LEVEL, em produção cai no default "info"', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.LOG_LEVEL = '';
+    // Ligar produção também aciona as validações dos itens 1-3 — precisam
+    // de valores válidos aqui pra isolar só a checagem de LOG_LEVEL.
+    process.env.CORS_ORIGIN = 'https://app.exemplo.com';
+    process.env.JWT_ACCESS_SECRET = SAFE_SECRET;
+    process.env.BINDEX_PEPPER = SAFE_SECRET;
+    process.env.FIELD_ENCRYPTION_KEY = SAFE_FIELD_ENCRYPTION_KEY;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = SAFE_SUPABASE_KEY;
+    jest.resetModules();
+    expect(require('../../src/config/env').logLevel).toBe('info');
+  });
+});

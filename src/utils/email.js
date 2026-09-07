@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const env = require('../config/env');
+const logger = require('./logger');
 
 // SMTP é opcional (ver config/env.js) — "esqueci minha senha" é uma
 // feature isolada, a API inteira não deve recusar subir por causa dela.
@@ -38,8 +39,8 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
     // testar o fluxo inteiro localmente sem precisar configurar SMTP de
     // verdade, sem abrir mão do "nunca revela ao chamador" (isso aqui só
     // quem tem acesso ao terminal do backend vê).
-    console.error(`SMTP não configurado — e-mail de recuperação de senha NÃO enviado (ver SMTP_* em .env)`);
-    console.error(`Link de recuperação (${to}): ${resetUrl}`);
+    logger.warn('SMTP não configurado — e-mail de recuperação de senha NÃO enviado (ver SMTP_* em .env)');
+    logger.warn(`Link de recuperação (${to}): ${resetUrl}`);
     return;
   }
 
@@ -56,7 +57,7 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
       `,
     });
   } catch (err) {
-    console.error('Falha ao enviar e-mail de recuperação de senha:', err.message);
+    logger.error({ err }, 'Falha ao enviar e-mail de recuperação de senha');
   }
 }
 

@@ -1,7 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const multer = require('multer');
 const env = require('./config/env');
+const AppError = require('./utils/AppError');
+const { initSentry, Sentry } = require('./utils/sentry');
+const requestLogger = require('./middlewares/requestLogger');
 const { apiLimiter } = require('./middlewares/rateLimit');
 const authRoutes = require('./modules/auth/auth.routes');
 const citiesRoutes = require('./modules/cities/cities.routes');
@@ -15,18 +19,23 @@ const accessLogsRoutes = require('./modules/access-logs/access-logs.routes');
 const fleetLogsRoutes = require('./modules/fleet-logs/fleet-logs.routes');
 const auditLogsRoutes = require('./modules/audit-logs/audit-logs.routes');
 const loginLogsRoutes = require('./modules/login-logs/login-logs.routes');
+const healthRoutes = require('./modules/health/health.routes');
 const errorHandler = require('./middlewares/errorHandler');
+
+initSentry();
 
 const app = express();
 
 app.use(cors({ origin: env.corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+app.use(requestLogger);
 
 // Limite geral em toda a API — os endpoints de auth ainda ganham limites
 // próprios mais rígidos (ver auth.routes.js), aplicados em série com este.
 app.use('/api/v1', apiLimiter);
 
+app.use('/api/v1/health', healthRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/cities', citiesRoutes);
 app.use('/api/v1/companies', companiesRoutes);
@@ -39,6 +48,17 @@ app.use('/api/v1/access-logs', accessLogsRoutes);
 app.use('/api/v1/fleet-logs', fleetLogsRoutes);
 app.use('/api/v1/audit-logs', auditLogsRoutes);
 app.use('/api/v1/login-logs', loginLogsRoutes);
+
+// Precisa vir depois de todas as rotas e antes do errorHandler (ordem
+// exigida pela própria Sentry). `shouldHandleError` filtra pra só capturar
+// exceptions de verdade: AppError e MulterError já viram respostas 4xx
+// controladas pelo errorHandler abaixo, não são "erro" no sentido de
+// alerta — só o catch-all 500 é reportado.
+Sentry.setupExpressErrorHandler(app, {
+  shouldHandleError(err) {
+    return !(err instanceof AppError) && !(err instanceof multer.MulterError);
+  },
+});
 
 app.use(errorHandler);
 
