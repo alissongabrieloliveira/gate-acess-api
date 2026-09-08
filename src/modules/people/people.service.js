@@ -2,6 +2,7 @@ const AppError = require('../../utils/AppError');
 const repository = require('./people.repository');
 const { generateBindex } = require('../../utils/bindex');
 const { encryptField, decryptField } = require('../../utils/crypto');
+const { isValidCpf } = require('../../utils/cpf');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
 
@@ -41,6 +42,17 @@ async function singleDTO(person) {
 function assertValidPersonType(personType) {
   if (personType !== undefined && !VALID_PERSON_TYPES.includes(personType)) {
     throw new AppError('person_type inválido (use 1=Visitante, 2=Prestador, 3=Funcionário)', 400);
+  }
+}
+
+// CPF é opcional (schema aceita pessoa sem CPF — estrangeiro/criança só com
+// RG), então só valida quando um valor é informado. cpf_encrypted é
+// criptografado, por isso essa checagem não dá pra fazer via CHECK
+// constraint no Postgres (diferente do CNPJ de companies) — precisa
+// acontecer aqui, antes de encriptar.
+function assertValidCpf(cpf) {
+  if (cpf && !isValidCpf(cpf)) {
+    throw new AppError('CPF inválido', 400);
   }
 }
 
@@ -123,6 +135,7 @@ async function create(auth, { personType, name, cpf, rg, phone, photoUrl }) {
 
   const type = personType !== undefined ? Number(personType) : PERSON_TYPES.VISITOR;
   assertValidPersonType(type);
+  assertValidCpf(cpf);
 
   try {
     const person = await withAuthTransaction(auth, (trx) =>
@@ -159,6 +172,7 @@ async function update(auth, id, payload) {
   }
   if (payload.name !== undefined) changes.name_encrypted = encryptField(payload.name);
   if (payload.cpf !== undefined) {
+    assertValidCpf(payload.cpf);
     changes.cpf_encrypted = payload.cpf ? encryptField(payload.cpf) : null;
     changes.cpf_bindex = payload.cpf ? generateBindex(payload.cpf) : null;
   }

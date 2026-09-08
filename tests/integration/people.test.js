@@ -24,19 +24,38 @@ describe('Pessoas (people) — CRUD, busca e bloqueio', () => {
     const res = await request(app)
       .post('/api/v1/people')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Fulano de Tal', cpf: '11122233344', personType: 1 });
+      .send({ name: 'Fulano de Tal', cpf: '12345678909', personType: 1 });
 
     expect(res.status).toBe(201);
     expect(res.body.name).toBe('Fulano de Tal');
-    expect(res.body.cpf).toBe('11122233344');
+    expect(res.body.cpf).toBe('12345678909');
 
     const row = await db('people').where({ id: res.body.id }).first();
     expect(row.name_encrypted).not.toContain('Fulano');
-    expect(row.cpf_encrypted).not.toContain('11122233344');
+    expect(row.cpf_encrypted).not.toContain('12345678909');
   });
 
   test('POST /people sem nome -> 400', async () => {
-    const res = await request(app).post('/api/v1/people').set('Authorization', `Bearer ${token}`).send({ cpf: '99988877766' });
+    const res = await request(app).post('/api/v1/people').set('Authorization', `Bearer ${token}`).send({ cpf: '12345678909' });
+    expect(res.status).toBe(400);
+  });
+
+  // Regressão: antes desta validação, qualquer sequência de 11 dígitos era
+  // aceita como CPF (achado real reportado pelo usuário).
+  test('POST /people com CPF inválido (dígito verificador incorreto) -> 400', async () => {
+    const res = await request(app)
+      .post('/api/v1/people')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'CPF Invalido', cpf: '11122233344' });
+    expect(res.status).toBe(400);
+  });
+
+  test('PUT /people/:id com CPF inválido -> 400, não altera o cadastro', async () => {
+    const person = await createPerson({ companyId: company.id, name: 'Pessoa CPF Valido', cpf: '11144477735' });
+    const res = await request(app)
+      .put(`/api/v1/people/${person.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ cpf: '99999999999' });
     expect(res.status).toBe(400);
   });
 
