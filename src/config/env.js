@@ -148,11 +148,15 @@ module.exports = {
   // Trocou de SMTP pra Resend depois de um teste real em produção (Railway)
   // onde o SMTP reportava sucesso no envio mas o e-mail nunca chegava.
   resendApiKey: process.env.RESEND_API_KEY || null,
-  // Enquanto a conta Resend estiver em modo de teste (sem domínio próprio
-  // verificado), o remetente É SEMPRE `onboarding@resend.dev` e só entrega
-  // pro e-mail cadastrado na própria conta Resend — este valor fica sem
-  // efeito prático até um domínio ser verificado no Resend.
-  emailFrom: process.env.EMAIL_FROM || 'Portaria <no-reply@localhost>',
+  // Achado real em produção: o Resend NÃO ignora/substitui este campo — ele
+  // valida o formato (rejeita endereço sem TLD, ex.: "no-reply@localhost",
+  // com 422 "Invalid `from` field") e, em modo de teste (sem domínio
+  // próprio verificado), só aceita `onboarding@resend.dev` como remetente
+  // de verdade, entregando só pro e-mail cadastrado na própria conta
+  // Resend. Por isso o default já é esse endereço — assim que um domínio
+  // for verificado no Resend, configurar EMAIL_FROM com o remetente real
+  // (ex.: "Portaria <no-reply@seudominio.com>").
+  emailFrom: process.env.EMAIL_FROM || 'Portaria <onboarding@resend.dev>',
 
   passwordResetExpiresIn: process.env.PASSWORD_RESET_EXPIRES_IN || '30m',
 
