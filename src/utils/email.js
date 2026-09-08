@@ -17,6 +17,13 @@ function getTransporter() {
       port: env.smtpPort,
       secure: env.smtpSecure,
       auth: { user: env.smtpUser, pass: env.smtpPassword },
+      // Railway (e provedores de deploy parecidos) não tem saída IPv6 — sem
+      // isso, o Node resolve host de SMTP (ex.: smtp.gmail.com) pro
+      // endereço IPv6 dele por padrão e a conexão falha com
+      // "connect ENETUNREACH" (achado real testando o envio em produção).
+      // Mesmo motivo pelo qual a conexão do Supabase usa o "Session
+      // pooler" em vez de "Direct connection" (ver knexfile.js).
+      family: 4,
     });
   }
   return transporter;
