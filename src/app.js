@@ -26,6 +26,19 @@ initSentry();
 
 const app = express();
 
+// Railway (e provedores de deploy parecidos) coloca a API atrás de um proxy
+// reverso — sem isso, o Express ignora o cabeçalho `X-Forwarded-For` e
+// `req.ip` resolve pro endereço interno do proxy, o MESMO pra toda
+// requisição. Efeito real (achado em produção): os limitadores por IP de
+// `middlewares/rateLimit.js` (apiLimiter, loginIpLimiter, refreshLimiter)
+// acabam compartilhando uma única cota entre todos os usuários, em vez de
+// limitar por origem de verdade — e o express-rate-limit recusa gerar a
+// chave nesse cenário (`ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`). `1` confia só
+// no primeiro hop (o proxy do Railway), não em qualquer proxy encadeado
+// informado pelo próprio cliente — mais seguro que `true` (confiaria em
+// qualquer quantidade de hops que o cliente alegasse).
+app.set('trust proxy', 1);
+
 app.use(cors({ origin: env.corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
