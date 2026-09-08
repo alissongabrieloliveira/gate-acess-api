@@ -80,4 +80,29 @@ describe('RBAC — rotas admin-only (/users) e "admin ou o próprio usuário"', 
     expect(res.status).toBe(200);
     expect(res.body.isActive).toBe(false);
   });
+
+  // Regressão: usuário reportou que "novo usuário ou editar usuário ainda
+  // permite CPF inválido" mesmo depois da validação já ter sido adicionada
+  // em people.service.js — o mesmo achado não tinha sido replicado em
+  // users.service.js, que também grava cpf_encrypted.
+  test('POST /users com CPF inválido (dígito verificador incorreto) -> 400', async () => {
+    const res = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Usuario CPF Invalido',
+        cpf: '11122233344',
+        email: `usuario.cpf.invalido.${Date.now()}@teste.com`,
+        password: 'SenhaTeste123!',
+      });
+    expect(res.status).toBe(400);
+  });
+
+  test('PATCH /users/:id (o próprio usuário) com CPF inválido -> 400', async () => {
+    const res = await request(app)
+      .patch(`/api/v1/users/${operator.id}`)
+      .set('Authorization', `Bearer ${operatorToken}`)
+      .send({ cpf: '11122233344' });
+    expect(res.status).toBe(400);
+  });
 });

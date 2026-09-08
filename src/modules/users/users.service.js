@@ -3,9 +3,19 @@ const repository = require('./users.repository');
 const { generateBindex } = require('../../utils/bindex');
 const { hashPassword } = require('../../utils/password');
 const { encryptField, decryptField } = require('../../utils/crypto');
+const { isValidCpf } = require('../../utils/cpf');
 const RULES = require('../../config/rules');
 
 const UNIQUE_VIOLATION = '23505';
+
+// Diferente de people (CPF opcional), aqui o CPF é obrigatório — mas a
+// checagem de validade é a mesma checagem em si (cpf_encrypted também é
+// criptografado, sem CHECK constraint possível no Postgres).
+function assertValidCpf(cpf) {
+  if (!isValidCpf(cpf)) {
+    throw new AppError('CPF inválido', 400);
+  }
+}
 
 function isAdmin(auth) {
   return Boolean(auth.rules & RULES.ADMIN);
@@ -86,6 +96,7 @@ async function create(companyId, { name, cpf, email, password, rules }) {
   if (!name || !cpf || !email || !password) {
     throw new AppError('Nome, CPF, e-mail e senha são obrigatórios', 400);
   }
+  assertValidCpf(cpf);
 
   const passwordHash = await hashPassword(password);
 
@@ -134,6 +145,7 @@ async function update(companyId, id, auth, payload) {
 
   if (payload.name !== undefined) changes.name_encrypted = encryptField(payload.name);
   if (payload.cpf !== undefined) {
+    assertValidCpf(payload.cpf);
     changes.cpf_encrypted = encryptField(payload.cpf);
     changes.cpf_bindex = generateBindex(payload.cpf);
   }
