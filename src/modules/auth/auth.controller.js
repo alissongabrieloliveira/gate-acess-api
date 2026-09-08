@@ -10,7 +10,18 @@ function setRefreshCookie(res, token, expiresAt) {
   res.cookie(REFRESH_COOKIE_NAME, token, {
     httpOnly: true,
     secure: env.nodeEnv === 'production',
-    sameSite: 'strict',
+    // 'strict' funciona em dev porque frontend e backend, mesmo em portas
+    // diferentes, são "same-site" (mesmo domínio raiz: localhost). Em
+    // produção o normal é frontend e backend viverem em domínios raiz
+    // DIFERENTES (ex.: app na Vercel, API no Railway) — nesse caso
+    // 'strict' faz o navegador nunca enviar o cookie nas chamadas do
+    // frontend pro backend, e o refresh (logo a sessão inteira) quebra
+    // silenciosamente. 'none' exige 'secure: true' (por isso só em
+    // produção, onde 'secure' já é true) — continua seguro contra CSRF
+    // porque o cookie é httpOnly e só viaja pro path de auth, e mesmo
+    // same-site 'none' não causa problema nenhum (o navegador só deixa de
+    // aplicar a restrição extra, que aqui nunca foi a defesa principal).
+    sameSite: env.nodeEnv === 'production' ? 'none' : 'strict',
     path: REFRESH_COOKIE_PATH,
     expires: expiresAt,
   });
