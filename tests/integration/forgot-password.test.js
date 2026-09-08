@@ -1,6 +1,6 @@
-// SMTP não está configurado em .env.test de propósito (ver env.js) — mocka
-// o módulo de envio pra conseguir capturar o token bruto que só existe em
-// memória durante a request (o banco só guarda o hash, igual refresh_tokens).
+// RESEND_API_KEY não está configurada em .env.test de propósito (ver env.js) —
+// mocka o módulo de envio pra conseguir capturar o token bruto que só existe
+// em memória durante a request (o banco só guarda o hash, igual refresh_tokens).
 jest.mock('../../src/utils/email');
 
 const request = require('supertest');

@@ -1,32 +1,17 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const env = require('../config/env');
 const logger = require('./logger');
 
-// SMTP é opcional (ver config/env.js) — "esqueci minha senha" é uma
+// Resend é opcional (ver config/env.js) — "esqueci minha senha" é uma
 // feature isolada, a API inteira não deve recusar subir por causa dela.
-// Considerado "configurado" só se host/usuário/senha estiverem todos
-// presentes; qualquer um faltando já é tratado como "não configurado" (não
-// um erro de configuração parcial).
-const isConfigured = Boolean(env.smtpHost && env.smtpUser && env.smtpPassword);
+const isConfigured = Boolean(env.resendApiKey);
 
-let transporter = null;
-function getTransporter() {
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: env.smtpHost,
-      port: env.smtpPort,
-      secure: env.smtpSecure,
-      auth: { user: env.smtpUser, pass: env.smtpPassword },
-      // Railway (e provedores de deploy parecidos) não tem saída IPv6 — sem
-      // isso, o Node resolve host de SMTP (ex.: smtp.gmail.com) pro
-      // endereço IPv6 dele por padrão e a conexão falha com
-      // "connect ENETUNREACH" (achado real testando o envio em produção).
-      // Mesmo motivo pelo qual a conexão do Supabase usa o "Session
-      // pooler" em vez de "Direct connection" (ver knexfile.js).
-      family: 4,
-    });
+let client = null;
+function getClient() {
+  if (!client) {
+    client = new Resend(env.resendApiKey);
   }
-  return transporter;
+  return client;
 }
 
 /**
@@ -36,23 +21,24 @@ function getTransporter() {
  * "esse e-mail existe mas o envio falhou" vs. "nunca chega a tentar
  * enviar"). Falha vira só um log no servidor, nunca um retorno visível.
  *
- * Interface pequena de propósito — só esta função exportada — pra trocar
- * SMTP por outro provedor (Resend, por exemplo, considerado pro futuro)
- * exigir mudar só este arquivo por dentro, nada em quem o chama.
+ * Interface pequena de propósito — só esta função exportada — pra trocar de
+ * provedor exigir mudar só este arquivo por dentro, nada em quem o chama
+ * (já usada uma vez: este arquivo começou com SMTP/nodemailer e trocou pra
+ * Resend sem tocar em auth.service.js).
  */
 async function sendPasswordResetEmail({ to, resetUrl }) {
   if (!isConfigured) {
     // Loga o link no console do servidor (nunca num retorno HTTP) — dá pra
-    // testar o fluxo inteiro localmente sem precisar configurar SMTP de
+    // testar o fluxo inteiro localmente sem precisar configurar o Resend de
     // verdade, sem abrir mão do "nunca revela ao chamador" (isso aqui só
     // quem tem acesso ao terminal do backend vê).
-    logger.warn('SMTP não configurado — e-mail de recuperação de senha NÃO enviado (ver SMTP_* em .env)');
+    logger.warn('RESEND_API_KEY não configurada — e-mail de recuperação de senha NÃO enviado (ver RESEND_API_KEY em .env)');
     logger.warn(`Link de recuperação (${to}): ${resetUrl}`);
     return;
   }
 
   try {
-    await getTransporter().sendMail({
+    const { error } = await getClient().emails.send({
       from: env.emailFrom,
       to,
       subject: 'Recuperação de senha — Sistema de Gestão de Portaria',
@@ -63,6 +49,11 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
         <p>Este link expira em breve e só pode ser usado uma vez.</p>
       `,
     });
+    // O SDK do Resend não lança em erro de API (ex.: remetente/destinatário
+    // não permitido no modo de teste) — devolve `{ error }` no retorno.
+    if (error) {
+      logger.error({ err: error }, 'Falha ao enviar e-mail de recuperação de senha (Resend)');
+    }
   } catch (err) {
     logger.error({ err }, 'Falha ao enviar e-mail de recuperação de senha');
   }

@@ -140,18 +140,18 @@ module.exports = {
   supabaseServiceRoleKey,
   supabaseStorageBucket: process.env.SUPABASE_STORAGE_BUCKET || 'uploads',
 
-  // E-mail de recuperação de senha (ver src/utils/email.js) — OPCIONAL, ao
-  // contrário do Supabase acima: "esqueci minha senha" é uma feature
-  // isolada, não faz sentido a API inteira recusar subir por causa dela.
-  // Sem host/usuário/senha configurados, o envio só loga um aviso e segue
-  // sem erro (ver email.js) — nunca derruba a request.
-  smtpHost: process.env.SMTP_HOST || null,
-  smtpPort: Number(process.env.SMTP_PORT) || 587,
-  smtpUser: process.env.SMTP_USER || null,
-  smtpPassword: process.env.SMTP_PASSWORD || null,
-  // STARTTLS na porta 587 (mais comum) usa secure:false; porta 465 (SSL
-  // direto) usa secure:true.
-  smtpSecure: process.env.SMTP_SECURE === 'true',
+  // E-mail de recuperação de senha (ver src/utils/email.js), via Resend —
+  // OPCIONAL, ao contrário do Supabase acima: "esqueci minha senha" é uma
+  // feature isolada, não faz sentido a API inteira recusar subir por causa
+  // dela. Sem a API key configurada, o envio só loga um aviso (com o link
+  // completo) e segue sem erro (ver email.js) — nunca derruba a request.
+  // Trocou de SMTP pra Resend depois de um teste real em produção (Railway)
+  // onde o SMTP reportava sucesso no envio mas o e-mail nunca chegava.
+  resendApiKey: process.env.RESEND_API_KEY || null,
+  // Enquanto a conta Resend estiver em modo de teste (sem domínio próprio
+  // verificado), o remetente É SEMPRE `onboarding@resend.dev` e só entrega
+  // pro e-mail cadastrado na própria conta Resend — este valor fica sem
+  // efeito prático até um domínio ser verificado no Resend.
   emailFrom: process.env.EMAIL_FROM || 'Portaria <no-reply@localhost>',
 
   passwordResetExpiresIn: process.env.PASSWORD_RESET_EXPIRES_IN || '30m',
