@@ -128,6 +128,30 @@ async function createVehicle({ companyId, licensePlate, brand, model, vehicleTyp
   return row;
 }
 
+async function createGate({ companyId, name, description = null, isActive = true } = {}) {
+  const [row] = await db('gates')
+    .insert({
+      company_id: companyId,
+      name: name ?? `Portão Teste ${uniqueSuffix()}`,
+      description,
+      is_active: isActive,
+    })
+    .returning('*');
+  return row;
+}
+
+async function createSector({ companyId, name, description = null, isActive = true } = {}) {
+  const [row] = await db('sectors')
+    .insert({
+      company_id: companyId,
+      name: name ?? `Setor Teste ${uniqueSuffix()}`,
+      description,
+      is_active: isActive,
+    })
+    .returning('*');
+  return row;
+}
+
 module.exports = {
   uniqueSuffix,
   randomValidCnpj,
@@ -137,4 +161,6 @@ module.exports = {
   createRegularUser,
   createPerson,
   createVehicle,
+  createGate,
+  createSector,
 };
