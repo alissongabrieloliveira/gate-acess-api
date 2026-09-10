@@ -1,5 +1,6 @@
 const AppError = require('../../utils/AppError');
 const repository = require('./companies.repository');
+const withAuthTransaction = require('../../utils/withAuthTransaction');
 
 const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
@@ -19,7 +20,7 @@ async function getOwnCompany(companyId) {
 // reative uma empresa desativada, então deixar o admin desativar a própria
 // empresa por aqui seria um jeito fácil de se autobloquear sem saída) e
 // campos gerenciados só pelo sistema (id, created_at, updated_at, deleted_at).
-async function updateOwnCompany(companyId, payload) {
+async function updateOwnCompany(auth, payload) {
   const changes = {};
 
   if (payload.corporateName !== undefined) {
@@ -48,7 +49,11 @@ async function updateOwnCompany(companyId, payload) {
   }
 
   try {
-    const company = await repository.update(companyId, changes);
+    // withAuthTransaction configura request.jwt.claims na transação —
+    // trg_audit_companies (log_audit_event) lê isso pra gravar quem fez a
+    // alteração em audit_logs.user_id. Sem isso, toda edição apareceria na
+    // Auditoria com usuário em branco.
+    const company = await withAuthTransaction(auth, (trx) => repository.update(auth.companyId, changes, trx));
     if (!company) {
       throw new AppError('Empresa não encontrada', 404);
     }

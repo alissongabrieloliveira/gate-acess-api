@@ -11,7 +11,7 @@ async function getMe(req, res, next) {
 
 async function updateMe(req, res, next) {
   try {
-    const company = await companiesService.updateOwnCompany(req.auth.companyId, req.body || {});
+    const company = await companiesService.updateOwnCompany(req.auth, req.body || {});
     return res.status(200).json(company);
   } catch (err) {
     return next(err);

@@ -91,6 +91,28 @@ describe('PUT /companies/me', () => {
     expect(res.body.contact_phone).toBe('11987654321');
   });
 
+  // Pedido do usuário: edição em Configurações precisa aparecer em
+  // Relatórios > Auditoria. trg_audit_companies (migration
+  // add_audit_trigger_to_companies) + withAuthTransaction no service são o
+  // que fazem isso funcionar — sem qualquer um dos dois, ou não haveria
+  // linha nenhuma em audit_logs, ou ela existiria com user_id NULL.
+  test('edição fica registrada em audit_logs (Auditoria) com o admin que fez a alteração', async () => {
+    const res = await request(app)
+      .put('/api/v1/companies/me')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ tradeName: 'Nome Fantasia Para Auditoria' });
+    expect(res.status).toBe(200);
+
+    const auditRow = await db('audit_logs')
+      .where({ company_id: company.id, table_name: 'companies', record_id: company.id, action: 'UPDATE' })
+      .orderBy('changed_at', 'desc')
+      .first();
+
+    expect(auditRow).toBeDefined();
+    expect(auditRow.user_id).toBe(admin.id);
+    expect(auditRow.new_data.trade_name).toBe('Nome Fantasia Para Auditoria');
+  });
+
   test('CNPJ inválido (dígito verificador incorreto) -> 400', async () => {
     const valid = randomValidCnpj();
     // Corrompe o último dígito verificador mantendo 14 dígitos não-todos-iguais.
