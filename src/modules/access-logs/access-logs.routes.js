@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const authenticate = require('../../middlewares/authenticate');
+const { uploadAccessLogPhoto } = require('../../middlewares/upload');
 const controller = require('./access-logs.controller');
 
 const router = Router();
@@ -12,5 +13,6 @@ router.get('/', controller.list);
 router.post('/', controller.create);
 router.get('/:id', controller.getById);
 router.patch('/:id/exit', controller.exit);
+router.post('/:id/photo', uploadAccessLogPhoto.single('photo'), controller.uploadPhoto);
 
 module.exports = router;

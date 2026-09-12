@@ -1,6 +1,7 @@
 const AppError = require('../../utils/AppError');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
+const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
 const repository = require('./access-logs.repository');
 const peopleRepository = require('../people/people.repository');
 const peopleService = require('../people/people.service');
@@ -43,11 +44,20 @@ function toDTO(log) {
     exitOperatorId: log.exit_operator_id,
     receiptCode: log.receipt_code,
     signedReceiptUrl: log.signed_receipt_url,
+    // Ainda é o CAMINHO cru no bucket aqui, não uma URL de verdade — só vira
+    // URL assinada em singleDTO()/attachSignedPhotoUrls() (mesmo padrão de
+    // people.service.js/vehicles.service.js).
+    photoUrl: log.photo_url,
     status: log.status,
     observation: log.observation,
     createdAt: log.created_at,
     updatedAt: log.updated_at,
   };
+}
+
+async function singleDTO(log) {
+  const [dto] = await attachSignedPhotoUrls([toDTO(log)]);
+  return dto;
 }
 
 /**
@@ -89,14 +99,14 @@ async function list(companyId, { page, limit, status, personId, from, to, search
   ]);
 
   return {
-    data: rows.map(toDTO),
+    data: await attachSignedPhotoUrls(rows.map(toDTO)),
     pagination: { page: safePage, limit: safeLimit, total: Number(totalRow.count) },
   };
 }
 
 async function listActive(companyId) {
   const rows = await repository.listActiveByCompany(companyId);
-  return { data: rows.map(toDTO) };
+  return { data: await attachSignedPhotoUrls(rows.map(toDTO)) };
 }
 
 async function getById(companyId, id) {
@@ -104,7 +114,7 @@ async function getById(companyId, id) {
   if (!log) {
     throw new AppError('Registro de acesso não encontrado', 404);
   }
-  return toDTO(log);
+  return singleDTO(log);
 }
 
 async function registerEntry(auth, payload) {
@@ -195,7 +205,7 @@ async function registerEntry(auth, payload) {
         trx
       )
     );
-    return toDTO(log);
+    return singleDTO(log);
   } catch (err) {
     throw mapDbError(err);
   }
@@ -235,10 +245,30 @@ async function registerExit(auth, id, payload) {
 
   try {
     const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
-    return toDTO(updated);
+    return singleDTO(updated);
   } catch (err) {
     throw mapDbError(err);
   }
 }
 
-module.exports = { list, listActive, getById, registerEntry, registerExit };
+// Foto tirada no momento da entrada (tipicamente do veículo) — escopada ao
+// access_log em si, não a people/vehicles (ver migration
+// 20260912110000_add_photo_url_to_access_logs.js). Busca a linha crua
+// primeiro (não o DTO) pra achar o caminho antigo no bucket sem vazar esse
+// caminho interno pra fora da API, mesmo padrão de people.service.js#setPhoto.
+async function setPhoto(auth, id, photoPath) {
+  const existing = await repository.findByIdAndCompany(id, auth.companyId);
+  if (!existing) {
+    throw new AppError('Registro de acesso não encontrado', 404);
+  }
+  if (existing.photo_url) {
+    await deleteStoragePhoto(existing.photo_url);
+  }
+
+  const log = await withAuthTransaction(auth, (trx) =>
+    repository.update(id, auth.companyId, { photo_url: photoPath }, trx)
+  );
+  return singleDTO(log);
+}
+
+module.exports = { list, listActive, getById, registerEntry, registerExit, setPhoto };

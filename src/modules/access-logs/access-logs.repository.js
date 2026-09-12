@@ -19,6 +19,7 @@ const COLUMNS = [
   'exit_operator_id',
   'receipt_code',
   'signed_receipt_url',
+  'photo_url',
   'status',
   'observation',
   'created_at',

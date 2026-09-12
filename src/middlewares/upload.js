@@ -31,6 +31,7 @@ function createPhotoUpload() {
 // responsabilidade de buildPhotoPath(), não do multer.
 const uploadVehiclePhoto = createPhotoUpload();
 const uploadPersonPhoto = createPhotoUpload();
+const uploadAccessLogPhoto = createPhotoUpload();
 
 // Nome do objeto no bucket: "<dirName>/<prefix>-<id>-<timestamp>.<ext>" —
 // mesmo formato de nome já usado quando os uploads ficavam em disco, agora
@@ -41,4 +42,4 @@ function buildPhotoPath(dirName, prefix, id, mimetype) {
   return `${dirName}/${prefix}-${id}-${Date.now()}${ext}`;
 }
 
-module.exports = { uploadVehiclePhoto, uploadPersonPhoto, buildPhotoPath };
+module.exports = { uploadVehiclePhoto, uploadPersonPhoto, uploadAccessLogPhoto, buildPhotoPath };
