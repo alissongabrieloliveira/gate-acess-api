@@ -16,6 +16,8 @@ const CHECK_VIOLATION = '23514';
 const STATUS = { ACTIVE: 'ACTIVE', FINISHED: 'FINISHED' };
 // people.person_type: 1=Visitante, 2=Prestador, 3=Funcionário.
 const PERSON_TYPE_EMPLOYEE = 3;
+// vehicles.vehicle_type: 2=Frota Própria.
+const VEHICLE_TYPE_FLEET = 2;
 
 /**
  * KM só é obrigatório quando há veículo E a pessoa é Funcionário. Visitante/
@@ -194,6 +196,15 @@ async function registerEntry(auth, payload) {
       companyId,
       'vehicleId inválido: veículo não encontrado nesta empresa'
     );
+    // Frota Própria tem controle exclusivo (fleet-logs): saída/retorno da
+    // empresa, não acesso de fora pra dentro. Só vale na ENTRADA — acessos
+    // antigos com esse tipo de veículo continuam podendo ser finalizados.
+    if (vehicle.vehicle_type === VEHICLE_TYPE_FLEET) {
+      throw new AppError(
+        'Veículo da frota própria não passa pelo Controle de Acessos: registre a saída e o retorno pelo Controle de Frota',
+        400
+      );
+    }
     if (vehicle.is_blocked) {
       throw new AppError(`Veículo bloqueado: ${vehicle.block_reason || 'sem motivo informado'}`, 403);
     }

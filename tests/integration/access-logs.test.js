@@ -79,6 +79,21 @@ describe('Controle de Acessos (access-logs) — entrada, saída e regras de neg�
     expect(res.body.error).toMatch(/Documentação vencida/);
   });
 
+  test('POST /access-logs com veículo de FROTA PRÓPRIA -> 400 (tem controle exclusivo, o Controle de Frota)', async () => {
+    const person = await createPerson({ companyId: company.id, personType: 3 });
+    const fleetVehicle = await createVehicle({ companyId: company.id, vehicleType: 2 });
+    const res = await request(app)
+      .post('/api/v1/access-logs')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ personId: person.id, vehicleId: fleetVehicle.id, entryGateId: gate.id, kmEntry: 100 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Controle de Frota/);
+
+    // nenhum acesso foi criado
+    const rows = await db('access_logs').where({ vehicle_id: fleetVehicle.id });
+    expect(rows).toHaveLength(0);
+  });
+
   test('POST /access-logs registra a entrada e ignora entryOperatorId enviado pelo cliente (nunca confia no body)', async () => {
     const person = await createPerson({ companyId: company.id });
     const otherAdmin = await createAdminUser(company.id);
