@@ -27,6 +27,15 @@ async function getById(req, res, next) {
   }
 }
 
+async function lastKm(req, res, next) {
+  try {
+    const result = await fleetLogsService.getLastKm(req.auth.companyId, Number(req.params.vehicleId));
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function create(req, res, next) {
   try {
     const log = await fleetLogsService.registerDeparture(req.auth, req.body || {});
@@ -45,4 +54,4 @@ async function returnTrip(req, res, next) {
   }
 }
 
-module.exports = { list, listOnTrip, getById, create, returnTrip };
+module.exports = { list, listOnTrip, getById, lastKm, create, returnTrip };

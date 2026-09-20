@@ -11,12 +11,33 @@ const { normalizePlate } = vehiclesService;
 
 const CHECK_VIOLATION = '23514';
 const STATUS = { ON_TRIP: 'ON_TRIP', RETURNED: 'RETURNED' };
+// Teto de sanidade: um odômetro real não passa disso, e valores maiores
+// estouram o INT do Postgres (erro 500 em vez de 400).
+const MAX_KM = 9999999;
 
 function mapDbError(err) {
   if (err.code === CHECK_VIOLATION) {
     return new AppError('Dados inconsistentes (verifique KM, combustível ou datas informadas)', 400);
   }
   return err;
+}
+
+/**
+ * KM é obrigatório (saída e retorno), salvo quando o operador marca "KM
+ * indisponível" (painel quebrado, sem energia etc.) — aí o campo é ignorado e
+ * gravado como NULL, pra nunca coexistir um número com o flag de indisponível.
+ * Devolve `null` quando indisponível, senão o KM já validado como inteiro.
+ */
+function parseRequiredKm(value, isUnavailable, label) {
+  if (isUnavailable) return null;
+  if (value === undefined || value === null || value === '') {
+    throw new AppError(`${label} é obrigatório (ou marque "KM indisponível")`, 400);
+  }
+  const km = Number(value);
+  if (!Number.isInteger(km) || km < 0 || km > MAX_KM) {
+    throw new AppError(`${label} inválido: informe um número inteiro entre 0 e ${MAX_KM}`, 400);
+  }
+  return km;
 }
 
 function toDTO(log) {
@@ -122,6 +143,9 @@ async function registerDeparture(auth, payload) {
     throw new AppError('vehicleId e departureGateId são obrigatórios', 400);
   }
 
+  const kmUnavailable = Boolean(isKmUnavailable);
+  const kmDepartureValue = parseRequiredKm(kmDeparture, kmUnavailable, 'KM de saída');
+
   const vehicle = await assertBelongsToCompany(
     vehiclesRepository,
     Number(vehicleId),
@@ -179,8 +203,8 @@ async function registerDeparture(auth, payload) {
           purpose: purpose || null,
           departure_gate_id: Number(departureGateId),
           departure_operator_id: auth.userId,
-          km_departure: kmDeparture !== undefined ? Number(kmDeparture) : null,
-          is_km_unavailable: Boolean(isKmUnavailable),
+          km_departure: kmDepartureValue,
+          is_km_unavailable: kmUnavailable,
           fuel_level_departure: fuelLevelDeparture !== undefined ? Number(fuelLevelDeparture) : null,
           observation: observation || null,
         },
@@ -191,6 +215,22 @@ async function registerDeparture(auth, payload) {
   } catch (err) {
     throw mapDbError(err);
   }
+}
+
+/**
+ * Último KM conhecido do veículo (retorno da última viagem, ou a saída se ela
+ * ainda não voltou / voltou sem KM) — usado pra pré-preencher e conferir o KM
+ * de saída da próxima viagem. `lastKm: null` quando nunca houve KM registrado.
+ */
+async function getLastKm(companyId, vehicleId) {
+  await assertBelongsToCompany(
+    vehiclesRepository,
+    vehicleId,
+    companyId,
+    'vehicleId inválido: veículo não encontrado nesta empresa'
+  );
+  const row = await repository.findLastKnownKm(companyId, vehicleId);
+  return { vehicleId, lastKm: row ? Number(row.km) : null };
 }
 
 async function registerReturn(auth, id, payload) {
@@ -208,6 +248,20 @@ async function registerReturn(auth, id, payload) {
     throw new AppError('returnGateId é obrigatório', 400);
   }
 
+  const kmUnavailable = Boolean(isKmUnavailable);
+  const kmReturnValue = parseRequiredKm(kmReturn, kmUnavailable, 'KM de retorno');
+  // Estritamente maior: um veículo que foi e voltou rodou pelo menos 1 km.
+  // Igual à saída é quase sempre o operador repetindo o número. Sem KM de
+  // saída registrado (indisponível, ou registro anterior à obrigatoriedade)
+  // não há com o que comparar.
+  if (kmReturnValue !== null && log.km_departure !== null && kmReturnValue <= log.km_departure) {
+    throw new AppError(
+      `KM de retorno deve ser maior que o KM de saída (${log.km_departure}). ` +
+        'Se o painel do veículo não está legível, marque "KM indisponível".',
+      400
+    );
+  }
+
   await assertBelongsToCompany(
     gatesRepository,
     Number(returnGateId),
@@ -221,8 +275,10 @@ async function registerReturn(auth, id, payload) {
     return_operator_id: auth.userId,
     status: STATUS.RETURNED,
   };
-  if (kmReturn !== undefined) changes.km_return = Number(kmReturn);
-  if (isKmUnavailable !== undefined) changes.is_km_unavailable = Boolean(isKmUnavailable);
+  changes.km_return = kmReturnValue;
+  // Só liga o flag: se a saída já foi marcada como indisponível, o retorno
+  // com KM válido não pode desligar isso.
+  if (kmUnavailable) changes.is_km_unavailable = true;
   if (fuelLevelReturn !== undefined) changes.fuel_level_return = Number(fuelLevelReturn);
   if (observation !== undefined) changes.observation = observation;
 
@@ -234,4 +290,4 @@ async function registerReturn(auth, id, payload) {
   }
 }
 
-module.exports = { list, listOnTrip, getById, registerDeparture, registerReturn };
+module.exports = { list, listOnTrip, getById, getLastKm, registerDeparture, registerReturn };

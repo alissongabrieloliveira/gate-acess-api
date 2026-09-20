@@ -71,6 +71,21 @@ function listOnTripByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ON_TRIP' }).orderBy('departure_time', 'asc');
 }
 
+// Log mais recente do veículo que tenha algum KM registrado; COALESCE porque
+// o retorno (quando existe) é sempre a leitura mais nova do odômetro.
+function findLastKnownKm(companyId, vehicleId) {
+  return db('fleet_logs')
+    .where({ company_id: companyId, vehicle_id: vehicleId })
+    .whereNull('deleted_at')
+    .andWhere((qb) => qb.whereNotNull('km_return').orWhereNotNull('km_departure'))
+    .orderBy([
+      { column: 'departure_time', order: 'desc' },
+      { column: 'id', order: 'desc' },
+    ])
+    .select(db.raw('COALESCE(km_return, km_departure) AS km'))
+    .first();
+}
+
 // trx opcional (default: db): ver withAuthTransaction.
 async function insert(data, trx = db) {
   const [row] = await trx('fleet_logs').insert(data).returning(COLUMNS);
@@ -91,6 +106,7 @@ module.exports = {
   listByCompany,
   countByCompany,
   listOnTripByCompany,
+  findLastKnownKm,
   insert,
   update,
 };
