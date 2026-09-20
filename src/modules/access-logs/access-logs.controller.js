@@ -30,6 +30,15 @@ async function getById(req, res, next) {
   }
 }
 
+async function lastKm(req, res, next) {
+  try {
+    const result = await accessLogsService.getLastKm(req.auth.companyId, Number(req.params.vehicleId));
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function create(req, res, next) {
   try {
     const log = await accessLogsService.registerEntry(req.auth, req.body || {});
@@ -72,4 +81,4 @@ async function uploadPhoto(req, res, next) {
   }
 }
 
-module.exports = { list, listActive, getById, create, exit, uploadPhoto };
+module.exports = { list, listActive, getById, lastKm, create, exit, uploadPhoto };

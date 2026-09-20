@@ -1,6 +1,7 @@
 const AppError = require('../../utils/AppError');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
+const { resolveKm } = require('../../utils/km');
 const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
 const repository = require('./access-logs.repository');
 const peopleRepository = require('../people/people.repository');
@@ -13,6 +14,19 @@ const sectorsRepository = require('../sectors/sectors.repository');
 const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
 const STATUS = { ACTIVE: 'ACTIVE', FINISHED: 'FINISHED' };
+// people.person_type: 1=Visitante, 2=Prestador, 3=Funcionário.
+const PERSON_TYPE_EMPLOYEE = 3;
+
+/**
+ * KM só é obrigatório quando há veículo E a pessoa é Funcionário. Visitante/
+ * prestador com veículo de fora: opcional — o operador na fila da portaria não
+ * precisa parar pra ler o painel de cada carro; e sem veículo não existe KM.
+ * Veículo de Frota Própria não entra aqui: tem controle próprio (fleet-logs),
+ * onde o KM é sempre obrigatório.
+ */
+function isKmRequired(person, vehicle) {
+  return Boolean(vehicle) && person?.person_type === PERSON_TYPE_EMPLOYEE;
+}
 
 function mapDbError(err) {
   if (err.code === UNIQUE_VIOLATION) {
@@ -117,6 +131,22 @@ async function getById(companyId, id) {
   return singleDTO(log);
 }
 
+/**
+ * Último KM conhecido do veículo neste controle (saída do último acesso, ou a
+ * entrada se ele ainda está dentro / saiu sem KM) — usado pra pré-preencher e
+ * conferir o KM de entrada do próximo acesso. `lastKm: null` = nunca houve KM.
+ */
+async function getLastKm(companyId, vehicleId) {
+  await assertBelongsToCompany(
+    vehiclesRepository,
+    vehicleId,
+    companyId,
+    'vehicleId inválido: veículo não encontrado nesta empresa'
+  );
+  const row = await repository.findLastKnownKm(companyId, vehicleId);
+  return { vehicleId, lastKm: row ? Number(row.km) : null };
+}
+
 async function registerEntry(auth, payload) {
   const { companyId } = auth;
   const {
@@ -156,8 +186,9 @@ async function registerEntry(auth, payload) {
     );
   }
 
+  let vehicle = null;
   if (vehicleId !== undefined && vehicleId !== null) {
-    const vehicle = await assertBelongsToCompany(
+    vehicle = await assertBelongsToCompany(
       vehiclesRepository,
       Number(vehicleId),
       companyId,
@@ -184,6 +215,13 @@ async function registerEntry(auth, payload) {
     'entryGateId inválido: portão não encontrado nesta empresa'
   );
 
+  const kmUnavailable = Boolean(isKmUnavailable);
+  const kmEntryValue = resolveKm(kmEntry, {
+    unavailable: kmUnavailable,
+    required: isKmRequired(person, vehicle),
+    label: 'KM de entrada',
+  });
+
   try {
     const log = await withAuthTransaction(auth, (trx) =>
       repository.insert(
@@ -193,8 +231,8 @@ async function registerEntry(auth, payload) {
           visited_person_id: visitedPersonId ? Number(visitedPersonId) : null,
           vehicle_id: vehicleId ? Number(vehicleId) : null,
           destination_sector_id: destinationSectorId ? Number(destinationSectorId) : null,
-          is_km_unavailable: Boolean(isKmUnavailable),
-          km_entry: kmEntry !== undefined ? Number(kmEntry) : null,
+          is_km_unavailable: kmUnavailable,
+          km_entry: kmEntryValue,
           visit_reason: visitReason || null,
           entry_gate_id: Number(entryGateId),
           entry_operator_id: auth.userId,
@@ -233,14 +271,36 @@ async function registerExit(auth, id, payload) {
     'exitGateId inválido: portão não encontrado nesta empresa'
   );
 
+  // Pessoa/veículo do próprio log (já validados como da empresa na entrada);
+  // só servem pra decidir se o KM de saída é obrigatório.
+  const person = await peopleRepository.findByIdAndCompany(log.person_id, companyId);
+  const vehicle = log.vehicle_id ? await vehiclesRepository.findByIdAndCompany(log.vehicle_id, companyId) : null;
+  const kmUnavailable = Boolean(isKmUnavailable);
+  const kmExitValue = resolveKm(kmExit, {
+    unavailable: kmUnavailable,
+    required: isKmRequired(person, vehicle),
+    label: 'KM de saída',
+  });
+  // Saída IGUAL à entrada é o normal (o veículo só foi até o estacionamento);
+  // só menor é impossível — o odômetro não volta.
+  if (kmExitValue !== null && log.km_entry !== null && kmExitValue < log.km_entry) {
+    throw new AppError(
+      `KM de saída não pode ser menor que o KM de entrada (${log.km_entry}). ` +
+        'Se o painel do veículo não está legível, marque "KM indisponível".',
+      400
+    );
+  }
+
   const changes = {
     exit_time: new Date(),
     exit_gate_id: Number(exitGateId),
     exit_operator_id: auth.userId,
     status: STATUS.FINISHED,
   };
-  if (kmExit !== undefined) changes.km_exit = Number(kmExit);
-  if (isKmUnavailable !== undefined) changes.is_km_unavailable = Boolean(isKmUnavailable);
+  if (kmExitValue !== null) changes.km_exit = kmExitValue;
+  // Só liga o flag: se a entrada já foi marcada como indisponível, uma saída
+  // com KM válido não pode desligar isso.
+  if (kmUnavailable) changes.is_km_unavailable = true;
   if (observation !== undefined) changes.observation = observation;
 
   try {
@@ -271,4 +331,4 @@ async function setPhoto(auth, id, photoPath) {
   return singleDTO(log);
 }
 
-module.exports = { list, listActive, getById, registerEntry, registerExit, setPhoto };
+module.exports = { list, listActive, getById, getLastKm, registerEntry, registerExit, setPhoto };

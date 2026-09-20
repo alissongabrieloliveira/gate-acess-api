@@ -9,6 +9,7 @@ router.use(authenticate);
 
 // /active precisa vir ANTES de /:id, senão Express tentaria casar "active" como :id.
 router.get('/active', controller.listActive);
+router.get('/vehicles/:vehicleId/last-km', controller.lastKm);
 router.get('/', controller.list);
 router.post('/', controller.create);
 router.get('/:id', controller.getById);

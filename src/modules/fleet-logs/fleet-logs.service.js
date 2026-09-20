@@ -1,6 +1,7 @@
 const AppError = require('../../utils/AppError');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
+const { resolveKm } = require('../../utils/km');
 const repository = require('./fleet-logs.repository');
 const peopleRepository = require('../people/people.repository');
 const peopleService = require('../people/people.service');
@@ -11,9 +12,6 @@ const { normalizePlate } = vehiclesService;
 
 const CHECK_VIOLATION = '23514';
 const STATUS = { ON_TRIP: 'ON_TRIP', RETURNED: 'RETURNED' };
-// Teto de sanidade: um odômetro real não passa disso, e valores maiores
-// estouram o INT do Postgres (erro 500 em vez de 400).
-const MAX_KM = 9999999;
 
 function mapDbError(err) {
   if (err.code === CHECK_VIOLATION) {
@@ -22,22 +20,9 @@ function mapDbError(err) {
   return err;
 }
 
-/**
- * KM é obrigatório (saída e retorno), salvo quando o operador marca "KM
- * indisponível" (painel quebrado, sem energia etc.) — aí o campo é ignorado e
- * gravado como NULL, pra nunca coexistir um número com o flag de indisponível.
- * Devolve `null` quando indisponível, senão o KM já validado como inteiro.
- */
+// KM da frota é sempre obrigatório (saída e retorno), salvo "KM indisponível".
 function parseRequiredKm(value, isUnavailable, label) {
-  if (isUnavailable) return null;
-  if (value === undefined || value === null || value === '') {
-    throw new AppError(`${label} é obrigatório (ou marque "KM indisponível")`, 400);
-  }
-  const km = Number(value);
-  if (!Number.isInteger(km) || km < 0 || km > MAX_KM) {
-    throw new AppError(`${label} inválido: informe um número inteiro entre 0 e ${MAX_KM}`, 400);
-  }
-  return km;
+  return resolveKm(value, { unavailable: isUnavailable, required: true, label });
 }
 
 function toDTO(log) {

@@ -70,6 +70,21 @@ function listActiveByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ACTIVE' }).orderBy('entry_time', 'asc');
 }
 
+// Acesso mais recente do veículo com algum KM registrado; COALESCE porque a
+// saída (quando existe) é sempre a leitura mais nova do odômetro.
+function findLastKnownKm(companyId, vehicleId) {
+  return db('access_logs')
+    .where({ company_id: companyId, vehicle_id: vehicleId })
+    .whereNull('deleted_at')
+    .andWhere((qb) => qb.whereNotNull('km_exit').orWhereNotNull('km_entry'))
+    .orderBy([
+      { column: 'entry_time', order: 'desc' },
+      { column: 'id', order: 'desc' },
+    ])
+    .select(db.raw('COALESCE(km_exit, km_entry) AS km'))
+    .first();
+}
+
 // trx opcional (default: db): ver withAuthTransaction.
 async function insert(data, trx = db) {
   const [row] = await trx('access_logs').insert(data).returning(COLUMNS);
@@ -90,6 +105,7 @@ module.exports = {
   listByCompany,
   countByCompany,
   listActiveByCompany,
+  findLastKnownKm,
   insert,
   update,
 };

@@ -198,6 +198,128 @@ describe('Controle de Acessos (access-logs) — entrada, saída e regras de neg�
     });
   });
 
+  describe('KM obrigatório só para Funcionário (com veículo)', () => {
+    const EMPLOYEE = 3;
+
+    const enter = (body) =>
+      request(app).post('/api/v1/access-logs').set('Authorization', `Bearer ${token}`).send({ entryGateId: gate.id, ...body });
+    const exitLog = (id, body) =>
+      request(app).patch(`/api/v1/access-logs/${id}/exit`).set('Authorization', `Bearer ${token}`).send({ exitGateId: gate.id, ...body });
+
+    test('funcionário COM veículo sem KM -> 400; com isKmUnavailable -> 201 e KM nulo', async () => {
+      const person = await createPerson({ companyId: company.id, personType: EMPLOYEE });
+      const vehicle = await createVehicle({ companyId: company.id, vehicleType: 3 });
+
+      const missing = await enter({ personId: person.id, vehicleId: vehicle.id });
+      expect(missing.status).toBe(400);
+      expect(missing.body.error).toMatch(/KM de entrada é obrigatório/);
+
+      const unavailable = await enter({ personId: person.id, vehicleId: vehicle.id, isKmUnavailable: true, kmEntry: 77 });
+      expect(unavailable.status).toBe(201);
+      expect(unavailable.body.kmEntry).toBeNull();
+      expect(unavailable.body.isKmUnavailable).toBe(true);
+    });
+
+    test('a obrigatoriedade vem do tipo da PESSOA: prestador com veículo de fora não precisa de KM', async () => {
+      const contractor = await createPerson({ companyId: company.id, personType: 2 });
+      const vehicle = await createVehicle({ companyId: company.id, vehicleType: 4 });
+      const res = await enter({ personId: contractor.id, vehicleId: vehicle.id });
+      expect(res.status).toBe(201);
+      expect(res.body.kmEntry).toBeNull();
+    });
+
+    test('funcionário SEM veículo, e visitante com veículo de fora, não precisam de KM', async () => {
+      const employee = await createPerson({ companyId: company.id, personType: EMPLOYEE });
+      const noVehicle = await enter({ personId: employee.id });
+      expect(noVehicle.status).toBe(201);
+
+      const visitor = await createPerson({ companyId: company.id, personType: 1 });
+      const visitorVehicle = await createVehicle({ companyId: company.id, vehicleType: 1 });
+      const optional = await enter({ personId: visitor.id, vehicleId: visitorVehicle.id });
+      expect(optional.status).toBe(201);
+      expect(optional.body.kmEntry).toBeNull();
+    });
+
+    test('KM opcional preenchido continua validado (inteiro, sem teto estourado)', async () => {
+      const visitor = await createPerson({ companyId: company.id, personType: 1 });
+      const vehicle = await createVehicle({ companyId: company.id, vehicleType: 1 });
+      for (const kmEntry of [10.5, 99999999999, 'abc']) {
+        const res = await enter({ personId: visitor.id, vehicleId: vehicle.id, kmEntry });
+        expect(res.status).toBe(400);
+      }
+    });
+
+    test('saída: KM obrigatório para funcionário com veículo; igual à entrada é aceito; menor é 400', async () => {
+      const person = await createPerson({ companyId: company.id, personType: EMPLOYEE });
+      const vehicle = await createVehicle({ companyId: company.id, vehicleType: 3 });
+
+      const entry = (await enter({ personId: person.id, vehicleId: vehicle.id, kmEntry: 5000 })).body;
+      const missing = await exitLog(entry.id, {});
+      expect(missing.status).toBe(400);
+      expect(missing.body.error).toMatch(/KM de saída é obrigatório/);
+
+      const lower = await exitLog(entry.id, { kmExit: 4999 });
+      expect(lower.status).toBe(400);
+      expect(lower.body.error).toMatch(/não pode ser menor que o KM de entrada \(5000\)/);
+
+      const equal = await exitLog(entry.id, { kmExit: 5000 });
+      expect(equal.status).toBe(200);
+      expect(equal.body.kmExit).toBe(5000);
+    });
+
+    test('saída: visitante com veículo de fora pode sair sem KM; "indisponível" dispensa o KM de quem é obrigado', async () => {
+      const visitor = await createPerson({ companyId: company.id, personType: 1 });
+      const visitorVehicle = await createVehicle({ companyId: company.id, vehicleType: 1 });
+      const visitorEntry = (await enter({ personId: visitor.id, vehicleId: visitorVehicle.id, kmEntry: 300 })).body;
+      expect((await exitLog(visitorEntry.id, {})).status).toBe(200);
+
+      const employee = await createPerson({ companyId: company.id, personType: EMPLOYEE });
+      const employeeVehicle = await createVehicle({ companyId: company.id, vehicleType: 3 });
+      const employeeEntry = (await enter({ personId: employee.id, vehicleId: employeeVehicle.id, kmEntry: 900 })).body;
+      const res = await exitLog(employeeEntry.id, { isKmUnavailable: true });
+      expect(res.status).toBe(200);
+      expect(res.body.kmExit).toBeNull();
+      expect(res.body.isKmUnavailable).toBe(true);
+      expect(res.body.kmEntry).toBe(900);
+    });
+
+    describe('GET /access-logs/vehicles/:vehicleId/last-km', () => {
+      const lastKm = async (vehicleId) =>
+        request(app).get(`/api/v1/access-logs/vehicles/${vehicleId}/last-km`).set('Authorization', `Bearer ${token}`);
+
+      test('sem histórico -> null; depois da entrada e da saída acompanha a leitura mais nova', async () => {
+        const person = await createPerson({ companyId: company.id, personType: EMPLOYEE });
+        const vehicle = await createVehicle({ companyId: company.id, vehicleType: 3 });
+        expect((await lastKm(vehicle.id)).body).toEqual({ vehicleId: vehicle.id, lastKm: null });
+
+        const entry = (await enter({ personId: person.id, vehicleId: vehicle.id, kmEntry: 4000 })).body;
+        expect((await lastKm(vehicle.id)).body.lastKm).toBe(4000);
+
+        await exitLog(entry.id, { kmExit: 4003 });
+        expect((await lastKm(vehicle.id)).body.lastKm).toBe(4003);
+      });
+
+      test('só olha os acessos: o Controle de Frota é outro controle e não interfere', async () => {
+        const person = await createPerson({ companyId: company.id, personType: EMPLOYEE });
+        const vehicle = await createVehicle({ companyId: company.id, vehicleType: 3 });
+        await enter({ personId: person.id, vehicleId: vehicle.id, kmEntry: 100 });
+
+        const trip = await request(app)
+          .post('/api/v1/fleet-logs')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ vehicleId: vehicle.id, departureGateId: gate.id, kmDeparture: 500 });
+        expect(trip.status).toBe(201);
+        expect((await lastKm(vehicle.id)).body.lastKm).toBe(100);
+      });
+
+      test('veículo de OUTRA empresa -> 400', async () => {
+        const otherCompany = await createCompany();
+        const otherVehicle = await createVehicle({ companyId: otherCompany.id });
+        expect((await lastKm(otherVehicle.id)).status).toBe(400);
+      });
+    });
+  });
+
   test('GET /access-logs?search= encontra pelo nome da pessoa mesmo fora da página atual', async () => {
     const person = await createPerson({ companyId: company.id, name: 'Zebedeu Buscavel Unico' });
     await request(app)
