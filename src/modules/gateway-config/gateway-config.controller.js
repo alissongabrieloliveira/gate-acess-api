@@ -54,4 +54,13 @@ async function deleteOutput(req, res, next) {
   }
 }
 
-module.exports = { getConfig, createDevice, revokeDevice, createOutput, updateOutput, deleteOutput };
+async function testOutput(req, res, next) {
+  try {
+    const result = await service.testOutput(req.auth, Number(req.params.id), req.body || {});
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { getConfig, createDevice, revokeDevice, createOutput, updateOutput, deleteOutput, testOutput };

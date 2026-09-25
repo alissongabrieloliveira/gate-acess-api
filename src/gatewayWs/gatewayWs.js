@@ -112,4 +112,21 @@ function sendCommandToGateway(gatewayDeviceId, { outputIds, action }, timeoutMs 
   return promise;
 }
 
-module.exports = { attachGatewayWs, sendCommandToGateway };
+/**
+ * Teste de UMA saída avulsa (diagnóstico, só admin) — mensagem de tipo
+ * próprio: um gateway antigo, que não conhece o tipo, ignora em vez de
+ * tratar como pulso de cancela (o backend só vê o timeout).
+ */
+function sendOutputTestToGateway(gatewayDeviceId, { outputId, mode, seconds }, timeoutMs = 5000) {
+  const ws = getConnection(gatewayDeviceId);
+  if (!ws) {
+    throw new AppError('Gateway do cliente está offline', 503);
+  }
+
+  const requestId = crypto.randomUUID();
+  const promise = createPendingCommand(requestId, timeoutMs);
+  ws.send(JSON.stringify({ type: 'outputTest', requestId, outputId, mode, seconds }));
+  return promise;
+}
+
+module.exports = { attachGatewayWs, sendCommandToGateway, sendOutputTestToGateway };

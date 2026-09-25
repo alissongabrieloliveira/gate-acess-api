@@ -2,9 +2,13 @@ const AppError = require('../../utils/AppError');
 const repository = require('./gateway-config.repository');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { generateGatewayToken } = require('../../utils/gatewayToken');
+const { sendOutputTestToGateway } = require('../../gatewayWs/gatewayWs');
+const logger = require('../../utils/logger');
 
 const UNIQUE_VIOLATION = '23505';
 const VALID_DIRECTIONS = ['ENTRY', 'EXIT'];
+const TEST_MODES = ['pulse', 'on', 'off'];
+const MAX_TEST_PULSE_SECONDS = 10;
 
 function toDeviceDTO(device) {
   if (!device) return null;
@@ -154,4 +158,51 @@ async function deleteOutput(auth, id) {
   await withAuthTransaction(auth, (trx) => repository.deleteOutput(id, auth.companyId, trx));
 }
 
-module.exports = { getConfig, createDevice, revokeDevice, createOutput, updateOutput, deleteOutput };
+/**
+ * Aciona UMA saída avulsa (tela de diagnóstico): pulso de N segundos ou
+ * liga/desliga sustentado. Feito pra testar em campo cada braço da cancela
+ * dupla separadamente. NÃO atualiza current_state — o estado presumido das
+ * cancelas continua sendo o da última ação por direção.
+ */
+async function testOutput(auth, id, { mode, seconds } = {}) {
+  if (!TEST_MODES.includes(mode)) {
+    throw new AppError('Modo de teste inválido — use "pulse", "on" ou "off"', 400);
+  }
+  if (mode === 'pulse' && (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_TEST_PULSE_SECONDS)) {
+    throw new AppError(`Tempo do pulso precisa ser um inteiro entre 1 e ${MAX_TEST_PULSE_SECONDS} segundos`, 400);
+  }
+
+  const output = await repository.findOutputByIdAndCompany(id, auth.companyId);
+  if (!output) {
+    throw new AppError('Saída não encontrada', 404);
+  }
+
+  const pulseSeconds = mode === 'pulse' ? seconds : undefined;
+  // Pulso: o módulo pode só responder no fim — timeout acompanha o tempo.
+  const timeoutMs = mode === 'pulse' ? seconds * 1000 + 5000 : 5000;
+
+  let ack;
+  try {
+    ack = await sendOutputTestToGateway(
+      output.gateway_device_id,
+      { outputId: output.id, mode, seconds: pulseSeconds },
+      timeoutMs
+    );
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError('Tempo esgotado aguardando o gateway — confira se ele está atualizado e conectado', 504);
+  }
+
+  if (!ack.ok) {
+    throw new AppError(`Gateway reportou falha ao acionar a saída: ${ack.error}`, 502);
+  }
+
+  logger.info(
+    { companyId: auth.companyId, userId: auth.userId, outputId: output.id, outputNumber: output.output_number, mode, seconds: pulseSeconds },
+    'Teste de saída avulsa acionado'
+  );
+
+  return { outputId: output.id, outputNumber: output.output_number, mode, seconds: pulseSeconds ?? null };
+}
+
+module.exports = { getConfig, createDevice, revokeDevice, createOutput, updateOutput, deleteOutput, testOutput };

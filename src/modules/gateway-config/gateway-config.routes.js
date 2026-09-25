@@ -15,5 +15,6 @@ router.post('/device/revoke', controller.revokeDevice);
 router.post('/outputs', controller.createOutput);
 router.put('/outputs/:id', controller.updateOutput);
 router.delete('/outputs/:id', controller.deleteOutput);
+router.post('/outputs/:id/test', controller.testOutput);
 
 module.exports = router;
