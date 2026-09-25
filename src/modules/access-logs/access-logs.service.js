@@ -2,6 +2,7 @@ const AppError = require('../../utils/AppError');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { resolveKm } = require('../../utils/km');
+const parseEditTimestamp = require('../../utils/parseEditTimestamp');
 const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
 const repository = require('./access-logs.repository');
 const peopleRepository = require('../people/people.repository');
@@ -322,6 +323,109 @@ async function registerExit(auth, id, payload) {
   }
 }
 
+/**
+ * Correção de um registro de acesso (só admin — ver routes): KM de entrada/
+ * saída, flag "KM indisponível", setor de destino, anfitrião e datas de
+ * entrada/saída. Atualização parcial: campo ausente (undefined) = mantém;
+ * null = limpa (só setor e anfitrião aceitam). Aplica as MESMAS regras da
+ * entrada/saída, pra edição não virar atalho que fura a validação. O
+ * antes/depois fica na Auditoria (trigger de access_logs).
+ */
+async function updateLog(auth, id, payload) {
+  const { companyId } = auth;
+  const log = await repository.findByIdAndCompany(id, companyId);
+  if (!log) {
+    throw new AppError('Registro de acesso não encontrado', 404);
+  }
+
+  const has = (field) => payload[field] !== undefined;
+  const isFinished = Boolean(log.exit_time);
+  if (!isFinished && (has('kmExit') || has('exitTime'))) {
+    throw new AppError(
+      'Este acesso ainda não tem saída registrada: registre a saída pelo fluxo normal antes de editar KM ou data de saída',
+      400
+    );
+  }
+
+  const changes = {};
+
+  if (has('destinationSectorId')) {
+    if (payload.destinationSectorId === null) {
+      changes.destination_sector_id = null;
+    } else {
+      await assertBelongsToCompany(
+        sectorsRepository,
+        Number(payload.destinationSectorId),
+        companyId,
+        'destinationSectorId inválido: setor não encontrado nesta empresa'
+      );
+      changes.destination_sector_id = Number(payload.destinationSectorId);
+    }
+  }
+
+  if (has('visitedPersonId')) {
+    if (payload.visitedPersonId === null) {
+      changes.visited_person_id = null;
+    } else {
+      await assertBelongsToCompany(
+        peopleRepository,
+        Number(payload.visitedPersonId),
+        companyId,
+        'visitedPersonId inválido: pessoa não encontrada nesta empresa'
+      );
+      changes.visited_person_id = Number(payload.visitedPersonId);
+    }
+  }
+
+  if (has('entryTime') || has('exitTime')) {
+    const entryTime = has('entryTime') ? parseEditTimestamp(payload.entryTime, 'Data de entrada') : log.entry_time;
+    const exitTime = has('exitTime') ? parseEditTimestamp(payload.exitTime, 'Data de saída') : log.exit_time;
+    if (exitTime && new Date(exitTime) < new Date(entryTime)) {
+      throw new AppError('Data de saída não pode ser anterior à data de entrada', 400);
+    }
+    if (has('entryTime')) changes.entry_time = entryTime;
+    if (has('exitTime')) changes.exit_time = exitTime;
+  }
+
+  // KM só é revalidado quando a edição mexe em KM: registros antigos (de
+  // antes da obrigatoriedade) podem ter o setor corrigido sem exigir KM.
+  if (has('kmEntry') || has('kmExit') || has('isKmUnavailable')) {
+    const unavailable = has('isKmUnavailable') ? Boolean(payload.isKmUnavailable) : Boolean(log.is_km_unavailable);
+    const person = await peopleRepository.findByIdAndCompany(log.person_id, companyId);
+    const vehicle = log.vehicle_id ? await vehiclesRepository.findByIdAndCompany(log.vehicle_id, companyId) : null;
+    // Diferente da entrada/saída, aqui o flag NÃO apaga os números: ele é do
+    // registro inteiro, e a entrada pode ter KM mesmo com a saída sem.
+    const required = isKmRequired(person, vehicle) && !unavailable;
+
+    const kmEntry = resolveKm(has('kmEntry') ? payload.kmEntry : log.km_entry, { required, label: 'KM de entrada' });
+    const kmExit = isFinished
+      ? resolveKm(has('kmExit') ? payload.kmExit : log.km_exit, { required, label: 'KM de saída' })
+      : null;
+    if (kmExit !== null && kmEntry !== null && kmExit < kmEntry) {
+      throw new AppError(
+        `KM de saída (${kmExit}) não pode ser menor que o KM de entrada (${kmEntry}). ` +
+          'Se o painel do veículo não está legível, marque "KM indisponível".',
+        400
+      );
+    }
+
+    changes.km_entry = kmEntry;
+    if (isFinished) changes.km_exit = kmExit;
+    changes.is_km_unavailable = unavailable;
+  }
+
+  if (Object.keys(changes).length === 0) {
+    return singleDTO(log);
+  }
+
+  try {
+    const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
+    return singleDTO(updated);
+  } catch (err) {
+    throw mapDbError(err);
+  }
+}
+
 // Foto tirada no momento da entrada (tipicamente do veículo) — escopada ao
 // access_log em si, não a people/vehicles (ver migration
 // 20260912110000_add_photo_url_to_access_logs.js). Busca a linha crua
@@ -342,4 +446,4 @@ async function setPhoto(auth, id, photoPath) {
   return singleDTO(log);
 }
 
-module.exports = { list, listActive, getById, getLastKm, registerEntry, registerExit, setPhoto };
+module.exports = { list, listActive, getById, getLastKm, registerEntry, registerExit, updateLog, setPhoto };

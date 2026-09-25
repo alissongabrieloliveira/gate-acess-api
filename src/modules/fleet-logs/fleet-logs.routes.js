@@ -1,5 +1,7 @@
 const { Router } = require('express');
 const authenticate = require('../../middlewares/authenticate');
+const authorize = require('../../middlewares/authorize');
+const RULES = require('../../config/rules');
 const controller = require('./fleet-logs.controller');
 
 const router = Router();
@@ -12,6 +14,9 @@ router.get('/vehicles/:vehicleId/last-km', controller.lastKm);
 router.get('/', controller.list);
 router.post('/', controller.create);
 router.get('/:id', controller.getById);
+// Corrigir KM/datas/destino de um registro é só admin; a Auditoria guarda
+// o antes/depois.
+router.put('/:id', authorize(RULES.ADMIN), controller.update);
 router.patch('/:id/return', controller.returnTrip);
 
 module.exports = router;

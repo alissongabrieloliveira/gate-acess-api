@@ -57,6 +57,15 @@ async function exit(req, res, next) {
   }
 }
 
+async function update(req, res, next) {
+  try {
+    const log = await accessLogsService.updateLog(req.auth, Number(req.params.id), req.body || {});
+    return res.status(200).json(log);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function uploadPhoto(req, res, next) {
   try {
     if (!req.file) {
@@ -81,4 +90,4 @@ async function uploadPhoto(req, res, next) {
   }
 }
 
-module.exports = { list, listActive, getById, lastKm, create, exit, uploadPhoto };
+module.exports = { list, listActive, getById, lastKm, create, exit, update, uploadPhoto };

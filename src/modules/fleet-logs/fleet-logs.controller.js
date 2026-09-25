@@ -54,4 +54,13 @@ async function returnTrip(req, res, next) {
   }
 }
 
-module.exports = { list, listOnTrip, getById, lastKm, create, returnTrip };
+async function update(req, res, next) {
+  try {
+    const log = await fleetLogsService.updateLog(req.auth, Number(req.params.id), req.body || {});
+    return res.status(200).json(log);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { list, listOnTrip, getById, lastKm, create, returnTrip, update };

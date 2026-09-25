@@ -2,6 +2,7 @@ const AppError = require('../../utils/AppError');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { resolveKm } = require('../../utils/km');
+const parseEditTimestamp = require('../../utils/parseEditTimestamp');
 const repository = require('./fleet-logs.repository');
 const peopleRepository = require('../people/people.repository');
 const peopleService = require('../people/people.service');
@@ -275,4 +276,93 @@ async function registerReturn(auth, id, payload) {
   }
 }
 
-module.exports = { list, listOnTrip, getById, getLastKm, registerDeparture, registerReturn };
+// destination/purpose são VARCHAR(255): texto vazio vira null.
+function parseOptionalText(value, label) {
+  if (value === null) return null;
+  const text = String(value).trim();
+  if (text.length > 255) {
+    throw new AppError(`${label} pode ter no máximo 255 caracteres`, 400);
+  }
+  return text || null;
+}
+
+/**
+ * Correção de um registro de frota (só admin — ver routes): KM de saída/
+ * retorno, flag "KM indisponível", destino, motivo e datas de saída/retorno.
+ * Atualização parcial (campo ausente = mantém). Mesmas regras da saída/
+ * retorno: KM sempre obrigatório salvo "KM indisponível", retorno
+ * estritamente maior que a saída. O antes/depois fica na Auditoria.
+ */
+async function updateLog(auth, id, payload) {
+  const { companyId } = auth;
+  const log = await repository.findByIdAndCompany(id, companyId);
+  if (!log) {
+    throw new AppError('Registro de frota não encontrado', 404);
+  }
+
+  const has = (field) => payload[field] !== undefined;
+  const hasReturned = Boolean(log.return_time);
+  if (!hasReturned && (has('kmReturn') || has('returnTime'))) {
+    throw new AppError(
+      'Este veículo ainda não retornou: registre o retorno pelo fluxo normal antes de editar KM ou data de retorno',
+      400
+    );
+  }
+
+  const changes = {};
+  if (has('destination')) changes.destination = parseOptionalText(payload.destination, 'Destino');
+  if (has('purpose')) changes.purpose = parseOptionalText(payload.purpose, 'Motivo');
+
+  if (has('departureTime') || has('returnTime')) {
+    const departureTime = has('departureTime')
+      ? parseEditTimestamp(payload.departureTime, 'Data de saída')
+      : log.departure_time;
+    const returnTime = has('returnTime') ? parseEditTimestamp(payload.returnTime, 'Data de retorno') : log.return_time;
+    if (returnTime && new Date(returnTime) < new Date(departureTime)) {
+      throw new AppError('Data de retorno não pode ser anterior à data de saída', 400);
+    }
+    if (has('departureTime')) changes.departure_time = departureTime;
+    if (has('returnTime')) changes.return_time = returnTime;
+  }
+
+  // KM só é revalidado quando a edição mexe em KM: registros antigos (de
+  // antes da obrigatoriedade) podem ter o destino corrigido sem exigir KM.
+  if (has('kmDeparture') || has('kmReturn') || has('isKmUnavailable')) {
+    const unavailable = has('isKmUnavailable') ? Boolean(payload.isKmUnavailable) : Boolean(log.is_km_unavailable);
+    // O flag é do registro inteiro: aqui ele só dispensa a obrigatoriedade,
+    // sem apagar números já informados.
+    const required = !unavailable;
+
+    const kmDeparture = resolveKm(has('kmDeparture') ? payload.kmDeparture : log.km_departure, {
+      required,
+      label: 'KM de saída',
+    });
+    const kmReturn = hasReturned
+      ? resolveKm(has('kmReturn') ? payload.kmReturn : log.km_return, { required, label: 'KM de retorno' })
+      : null;
+    if (kmReturn !== null && kmDeparture !== null && kmReturn <= kmDeparture) {
+      throw new AppError(
+        `KM de retorno (${kmReturn}) deve ser maior que o KM de saída (${kmDeparture}). ` +
+          'Se o painel do veículo não está legível, marque "KM indisponível".',
+        400
+      );
+    }
+
+    changes.km_departure = kmDeparture;
+    if (hasReturned) changes.km_return = kmReturn;
+    changes.is_km_unavailable = unavailable;
+  }
+
+  if (Object.keys(changes).length === 0) {
+    return toDTO(log);
+  }
+
+  try {
+    const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
+    return toDTO(updated);
+  } catch (err) {
+    throw mapDbError(err);
+  }
+}
+
+module.exports = { list, listOnTrip, getById, getLastKm, registerDeparture, registerReturn, updateLog };
