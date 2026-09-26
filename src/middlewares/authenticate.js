@@ -16,6 +16,7 @@ function authenticate(req, res, next) {
       companyId: payload.company_id,
       rules: payload.rules,
       mustChangePassword: Boolean(payload.must_change_password),
+      privacyNoticePending: Boolean(payload.privacy_notice_pending),
     };
     return next();
   } catch (err) {

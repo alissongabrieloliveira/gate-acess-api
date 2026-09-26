@@ -18,7 +18,7 @@ describe('middlewares/authenticate', () => {
     authenticate(req, res, next);
 
     expect(next).toHaveBeenCalledTimes(1);
-    expect(req.auth).toEqual({ userId: 5, companyId: 2, rules: 1, mustChangePassword: false });
+    expect(req.auth).toEqual({ userId: 5, companyId: 2, rules: 1, mustChangePassword: false, privacyNoticePending: false });
     expect(res.status).not.toHaveBeenCalled();
   });
 

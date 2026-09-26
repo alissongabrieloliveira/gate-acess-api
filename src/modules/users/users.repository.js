@@ -9,6 +9,8 @@ const COLUMNS = [
   'rules',
   'is_active',
   'must_change_password',
+  'privacy_notice_version',
+  'privacy_notice_accepted_at',
   'email_verified_at',
   'created_at',
   'updated_at',

@@ -1,4 +1,5 @@
 const bcrypt = require('bcrypt');
+const { PRIVACY_NOTICE_VERSION } = require('../../config/privacyNotice');
 const db = require('../../config/db');
 const env = require('../../config/env');
 const AppError = require('../../utils/AppError');
@@ -56,6 +57,7 @@ async function login({ email, password, ipAddress, userAgent }) {
     companyId: user.company_id,
     rules: user.rules,
     mustChangePassword: user.must_change_password,
+    privacyNoticePending: user.privacy_notice_version !== PRIVACY_NOTICE_VERSION,
   });
   const { raw: refreshTokenRaw, hash: refreshTokenHash } = generateRefreshToken();
   const expiresAt = refreshExpiresAt();
@@ -133,6 +135,7 @@ async function refresh({ refreshTokenRaw, ipAddress, userAgent }) {
     companyId: user.company_id,
     rules: user.rules,
     mustChangePassword: user.must_change_password,
+    privacyNoticePending: user.privacy_notice_version !== PRIVACY_NOTICE_VERSION,
   });
 
   return { accessToken, refreshTokenRaw: newRefreshTokenRaw, refreshExpiresAt: expiresAt };

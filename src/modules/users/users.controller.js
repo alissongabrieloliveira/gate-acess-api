@@ -51,4 +51,13 @@ async function remove(req, res, next) {
   }
 }
 
-module.exports = { list, getById, create, update, remove };
+async function acceptPrivacyNotice(req, res, next) {
+  try {
+    const user = await usersService.acceptPrivacyNotice(req.auth, req.body || {});
+    return res.status(200).json(user);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { list, getById, create, update, remove, acceptPrivacyNotice };

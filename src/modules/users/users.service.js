@@ -6,6 +6,7 @@ const { encryptField, decryptField } = require('../../utils/crypto');
 const { isValidCpf } = require('../../utils/cpf');
 const RULES = require('../../config/rules');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
+const { PRIVACY_NOTICE_VERSION } = require('../../config/privacyNotice');
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -32,6 +33,8 @@ function toDTO(user) {
     rules: user.rules,
     isActive: user.is_active,
     mustChangePassword: user.must_change_password,
+    privacyNoticeVersion: user.privacy_notice_version,
+    privacyNoticeAcceptedAt: user.privacy_notice_accepted_at,
     emailVerifiedAt: user.email_verified_at,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
@@ -188,6 +191,29 @@ async function update(companyId, id, auth, payload) {
   }
 }
 
+/**
+ * Ciência do aviso de privacidade e termo de responsabilidade (LGPD), feita
+ * pelo próprio usuário. `version` precisa ser a vigente: quem leu um texto
+ * antigo (aba aberta antes de uma atualização) lê o novo antes de aceitar.
+ */
+async function acceptPrivacyNotice(auth, { version } = {}) {
+  if (version !== PRIVACY_NOTICE_VERSION) {
+    throw new AppError('O aviso de privacidade foi atualizado. Recarregue a página e leia a versão nova.', 409);
+  }
+  const user = await withAuthTransaction(auth, (trx) =>
+    repository.update(
+      auth.userId,
+      auth.companyId,
+      { privacy_notice_version: version, privacy_notice_accepted_at: new Date() },
+      trx
+    )
+  );
+  if (!user) {
+    throw new AppError('Usuário não encontrado', 404);
+  }
+  return toDTO(user);
+}
+
 async function remove(companyId, id, auth) {
   if (auth.userId === id) {
     throw new AppError('Não é possível remover o próprio usuário', 400);
@@ -199,4 +225,4 @@ async function remove(companyId, id, auth) {
   }
 }
 
-module.exports = { list, getById, create, update, remove, isAdmin };
+module.exports = { list, getById, create, update, remove, isAdmin, acceptPrivacyNotice };

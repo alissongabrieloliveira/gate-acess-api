@@ -11,6 +11,8 @@ router.use(authenticate);
 
 router.get('/', authorize(RULES.ADMIN), controller.list);
 router.post('/', authorize(RULES.ADMIN), controller.create);
+// Ciência do aviso de privacidade (LGPD): sempre do próprio usuário do token.
+router.post('/me/privacy-notice', controller.acceptPrivacyNotice);
 // getById/update: admin ou o próprio usuário (checado no controller/service).
 router.get('/:id', controller.getById);
 router.patch('/:id', controller.update);
