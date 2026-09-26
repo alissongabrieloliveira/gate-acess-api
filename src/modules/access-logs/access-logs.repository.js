@@ -40,9 +40,10 @@ function findByIdAndCompany(id, companyId) {
 // em AND com os demais filtros. Só entram na query quando o array tem pelo
 // menos um id (o service já resolve o caso de busca sem nenhum match antes
 // de chegar aqui, retornando vazio sem nem consultar o banco).
-function applyFilters(query, { status, personId, from, to, personIds, vehicleIds }) {
+function applyFilters(query, { status, personId, entryGateId, from, to, personIds, vehicleIds }) {
   if (status) query.andWhere({ status });
   if (personId !== undefined) query.andWhere({ person_id: personId });
+  if (entryGateId !== undefined) query.andWhere({ entry_gate_id: entryGateId });
   if (from) query.andWhere('entry_time', '>=', from);
   if (to) query.andWhere('entry_time', '<=', to);
   if (personIds?.length || vehicleIds?.length) {
@@ -54,14 +55,14 @@ function applyFilters(query, { status, personId, from, to, personIds, vehicleIds
   return query;
 }
 
-function listByCompany(companyId, { limit, offset, status, personId, from, to, personIds, vehicleIds }) {
+function listByCompany(companyId, { limit, offset, status, personId, entryGateId, from, to, personIds, vehicleIds }) {
   const query = baseQuery(companyId).orderBy('entry_time', 'desc').limit(limit).offset(offset);
-  return applyFilters(query, { status, personId, from, to, personIds, vehicleIds });
+  return applyFilters(query, { status, personId, entryGateId, from, to, personIds, vehicleIds });
 }
 
-function countByCompany(companyId, { status, personId, from, to, personIds, vehicleIds }) {
+function countByCompany(companyId, { status, personId, entryGateId, from, to, personIds, vehicleIds }) {
   const query = db('access_logs').where({ company_id: companyId }).whereNull('deleted_at').count('id as count');
-  return applyFilters(query, { status, personId, from, to, personIds, vehicleIds }).first();
+  return applyFilters(query, { status, personId, entryGateId, from, to, personIds, vehicleIds }).first();
 }
 
 // Casa com o predicado do índice parcial idx_access_logs_active (company_id

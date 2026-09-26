@@ -118,13 +118,17 @@ async function withRelated(companyId, dtos) {
  * de um passo a mais. Se a busca não encontrar nenhuma pessoa nem veículo,
  * retorna vazio sem nem consultar access_logs.
  */
-async function list(companyId, { page, limit, status, personId, from, to, search } = {}) {
+async function list(companyId, { page, limit, status, personId, entryGateId, from, to, search } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
   const offset = (safePage - 1) * safeLimit;
+  if (entryGateId !== undefined && !Number.isInteger(Number(entryGateId))) {
+    throw new AppError('entryGateId inválido', 400);
+  }
   const filters = {
     status: status || undefined,
     personId: personId !== undefined ? Number(personId) : undefined,
+    entryGateId: entryGateId !== undefined ? Number(entryGateId) : undefined,
     from: from ? new Date(from) : undefined,
     to: to ? new Date(to) : undefined,
   };

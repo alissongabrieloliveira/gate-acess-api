@@ -21,6 +21,7 @@ const accessLogsRoutes = require('./modules/access-logs/access-logs.routes');
 const fleetLogsRoutes = require('./modules/fleet-logs/fleet-logs.routes');
 const auditLogsRoutes = require('./modules/audit-logs/audit-logs.routes');
 const loginLogsRoutes = require('./modules/login-logs/login-logs.routes');
+const dashboardRoutes = require('./modules/dashboard/dashboard.routes');
 const healthRoutes = require('./modules/health/health.routes');
 const errorHandler = require('./middlewares/errorHandler');
 
@@ -65,6 +66,7 @@ app.use('/api/v1/access-logs', accessLogsRoutes);
 app.use('/api/v1/fleet-logs', fleetLogsRoutes);
 app.use('/api/v1/audit-logs', auditLogsRoutes);
 app.use('/api/v1/login-logs', loginLogsRoutes);
+app.use('/api/v1/dashboard', dashboardRoutes);
 
 // Precisa vir depois de todas as rotas e antes do errorHandler (ordem
 // exigida pela própria Sentry). `shouldHandleError` filtra pra só capturar
