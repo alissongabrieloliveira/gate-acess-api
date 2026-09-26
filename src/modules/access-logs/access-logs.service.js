@@ -1,4 +1,5 @@
 const AppError = require('../../utils/AppError');
+const { encryptField, decryptField } = require('../../utils/crypto');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { resolveKm } = require('../../utils/km');
@@ -52,7 +53,7 @@ function toDTO(log) {
     isKmUnavailable: log.is_km_unavailable,
     kmEntry: log.km_entry,
     kmExit: log.km_exit,
-    visitReason: log.visit_reason,
+    visitReason: decryptField(log.visit_reason_encrypted),
     entryTime: log.entry_time,
     entryGateId: log.entry_gate_id,
     entryOperatorId: log.entry_operator_id,
@@ -66,7 +67,7 @@ function toDTO(log) {
     // people.service.js/vehicles.service.js).
     photoUrl: log.photo_url,
     status: log.status,
-    observation: log.observation,
+    observation: decryptField(log.observation_encrypted),
     createdAt: log.created_at,
     updatedAt: log.updated_at,
   };
@@ -118,6 +119,17 @@ async function withRelated(companyId, dtos) {
  * de um passo a mais. Se a busca não encontrar nenhuma pessoa nem veículo,
  * retorna vazio sem nem consultar access_logs.
  */
+// visit_reason tem até 255 caracteres: validado aqui, no texto em claro (a
+// coluna cifrada é TEXT). Texto vazio vira null.
+function parseLimitedText(value, label) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (text.length > 255) {
+    throw new AppError(`${label} pode ter no máximo 255 caracteres`, 400);
+  }
+  return text || null;
+}
+
 async function list(companyId, { page, limit, status, personId, entryGateId, from, to, search } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
@@ -213,7 +225,7 @@ async function registerEntry(auth, payload) {
     'personId inválido: pessoa não encontrada nesta empresa'
   );
   if (person.is_blocked) {
-    throw new AppError(`Pessoa bloqueada: ${person.block_reason || 'sem motivo informado'}`, 403);
+    throw new AppError(`Pessoa bloqueada: ${decryptField(person.block_reason_encrypted) || 'sem motivo informado'}`, 403);
   }
 
   if (visitedPersonId !== undefined && visitedPersonId !== null) {
@@ -243,7 +255,7 @@ async function registerEntry(auth, payload) {
       );
     }
     if (vehicle.is_blocked) {
-      throw new AppError(`Veículo bloqueado: ${vehicle.block_reason || 'sem motivo informado'}`, 403);
+      throw new AppError(`Veículo bloqueado: ${decryptField(vehicle.block_reason_encrypted) || 'sem motivo informado'}`, 403);
     }
   }
 
@@ -281,12 +293,12 @@ async function registerEntry(auth, payload) {
           destination_sector_id: destinationSectorId ? Number(destinationSectorId) : null,
           is_km_unavailable: kmUnavailable,
           km_entry: kmEntryValue,
-          visit_reason: visitReason || null,
+          visit_reason_encrypted: encryptField(parseLimitedText(visitReason, 'Motivo da visita')),
           entry_gate_id: Number(entryGateId),
           entry_operator_id: auth.userId,
           receipt_code: receiptCode || null,
           signed_receipt_url: signedReceiptUrl || null,
-          observation: observation || null,
+          observation_encrypted: encryptField(observation || null),
         },
         trx
       )
@@ -349,7 +361,7 @@ async function registerExit(auth, id, payload) {
   // Só liga o flag: se a entrada já foi marcada como indisponível, uma saída
   // com KM válido não pode desligar isso.
   if (kmUnavailable) changes.is_km_unavailable = true;
-  if (observation !== undefined) changes.observation = observation;
+  if (observation !== undefined) changes.observation_encrypted = encryptField(observation || null);
 
   try {
     const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));

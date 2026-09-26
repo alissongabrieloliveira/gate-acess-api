@@ -10,7 +10,7 @@ const COLUMNS = [
   'color',
   'operation_status',
   'is_blocked',
-  'block_reason',
+  'block_reason_encrypted',
   'photo_url',
   'identification_code',
   'created_at',

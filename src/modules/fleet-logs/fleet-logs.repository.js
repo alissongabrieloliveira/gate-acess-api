@@ -8,7 +8,7 @@ const COLUMNS = [
   'transporting_vehicle_id',
   'transported_by_plate',
   'destination',
-  'purpose',
+  'purpose_encrypted',
   'departure_time',
   'departure_gate_id',
   'departure_operator_id',
@@ -21,7 +21,7 @@ const COLUMNS = [
   'fuel_level_departure',
   'fuel_level_return',
   'status',
-  'observation',
+  'observation_encrypted',
   'created_at',
   'updated_at',
 ];

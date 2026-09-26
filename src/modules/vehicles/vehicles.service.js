@@ -1,4 +1,5 @@
 const AppError = require('../../utils/AppError');
+const { encryptField, decryptField } = require('../../utils/crypto');
 const repository = require('./vehicles.repository');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
@@ -53,7 +54,7 @@ function toDTO(vehicle) {
     color: vehicle.color,
     operationStatus: vehicle.operation_status,
     isBlocked: vehicle.is_blocked,
-    blockReason: vehicle.block_reason,
+    blockReason: decryptField(vehicle.block_reason_encrypted),
     // Ainda é o CAMINHO cru no bucket do Supabase aqui, não uma URL de
     // verdade — só vira URL assinada em singleDTO()/attachSignedPhotoUrls()
     // (mesmo critério de people.service.js). Nunca devolver toDTO() direto
@@ -205,7 +206,7 @@ async function setBlocked(auth, id, { isBlocked, reason }) {
       auth.companyId,
       {
         is_blocked: isBlocked,
-        block_reason: isBlocked ? reason : null,
+        block_reason_encrypted: isBlocked ? encryptField(reason) : null,
       },
       trx
     )

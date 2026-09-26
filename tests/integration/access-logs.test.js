@@ -1,3 +1,4 @@
+const { encryptField } = require('../../src/utils/crypto');
 const request = require('supertest');
 const app = require('../../src/app');
 const db = require('../helpers/db');
@@ -69,7 +70,7 @@ describe('Controle de Acessos (access-logs) — entrada, saída e regras de neg�
   test('POST /access-logs com veículo bloqueado -> 403', async () => {
     const person = await createPerson({ companyId: company.id });
     const vehicle = await createVehicle({ companyId: company.id });
-    await db('vehicles').where({ id: vehicle.id }).update({ is_blocked: true, block_reason: 'Documentação vencida' });
+    await db('vehicles').where({ id: vehicle.id }).update({ is_blocked: true, block_reason_encrypted: encryptField('Documentação vencida') });
 
     const res = await request(app)
       .post('/api/v1/access-logs')

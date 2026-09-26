@@ -1,3 +1,4 @@
+const { encryptField } = require('../../src/utils/crypto');
 const request = require('supertest');
 const app = require('../../src/app');
 const db = require('../helpers/db');
@@ -38,7 +39,7 @@ describe('Controle de Frota (fleet-logs) — saída, retorno e guincho', () => {
 
   test('POST /fleet-logs com veículo bloqueado -> 403', async () => {
     const vehicle = await createVehicle({ companyId: company.id, vehicleType: 2 });
-    await db('vehicles').where({ id: vehicle.id }).update({ is_blocked: true, block_reason: 'Manutenção atrasada' });
+    await db('vehicles').where({ id: vehicle.id }).update({ is_blocked: true, block_reason_encrypted: encryptField('Manutenção atrasada') });
     const res = await request(app)
       .post('/api/v1/fleet-logs')
       .set('Authorization', `Bearer ${token}`)

@@ -10,7 +10,7 @@ const COLUMNS = [
   'phone_encrypted',
   'photo_url',
   'is_blocked',
-  'block_reason',
+  'block_reason_encrypted',
   'created_at',
   'updated_at',
 ];

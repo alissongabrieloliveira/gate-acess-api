@@ -10,7 +10,7 @@ const COLUMNS = [
   'is_km_unavailable',
   'km_entry',
   'km_exit',
-  'visit_reason',
+  'visit_reason_encrypted',
   'entry_time',
   'entry_gate_id',
   'entry_operator_id',
@@ -21,7 +21,7 @@ const COLUMNS = [
   'signed_receipt_url',
   'photo_url',
   'status',
-  'observation',
+  'observation_encrypted',
   'created_at',
   'updated_at',
 ];

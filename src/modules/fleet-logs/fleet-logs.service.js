@@ -1,4 +1,5 @@
 const AppError = require('../../utils/AppError');
+const { encryptField, decryptField } = require('../../utils/crypto');
 const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { resolveKm } = require('../../utils/km');
@@ -62,7 +63,7 @@ function toDTO(log) {
     transportingVehicleId: log.transporting_vehicle_id,
     transportedByPlate: log.transported_by_plate,
     destination: log.destination,
-    purpose: log.purpose,
+    purpose: decryptField(log.purpose_encrypted),
     departureTime: log.departure_time,
     departureGateId: log.departure_gate_id,
     departureOperatorId: log.departure_operator_id,
@@ -75,7 +76,7 @@ function toDTO(log) {
     fuelLevelDeparture: log.fuel_level_departure,
     fuelLevelReturn: log.fuel_level_return,
     status: log.status,
-    observation: log.observation,
+    observation: decryptField(log.observation_encrypted),
     createdAt: log.created_at,
     updatedAt: log.updated_at,
   };
@@ -167,7 +168,7 @@ async function registerDeparture(auth, payload) {
     'vehicleId inválido: veículo não encontrado nesta empresa'
   );
   if (vehicle.is_blocked) {
-    throw new AppError(`Veículo bloqueado: ${vehicle.block_reason || 'sem motivo informado'}`, 403);
+    throw new AppError(`Veículo bloqueado: ${decryptField(vehicle.block_reason_encrypted) || 'sem motivo informado'}`, 403);
   }
 
   if (driverId !== undefined && driverId !== null) {
@@ -178,7 +179,7 @@ async function registerDeparture(auth, payload) {
       'driverId inválido: pessoa não encontrada nesta empresa'
     );
     if (driver.is_blocked) {
-      throw new AppError(`Motorista bloqueado: ${driver.block_reason || 'sem motivo informado'}`, 403);
+      throw new AppError(`Motorista bloqueado: ${decryptField(driver.block_reason_encrypted) || 'sem motivo informado'}`, 403);
     }
   }
 
@@ -214,13 +215,13 @@ async function registerDeparture(auth, payload) {
           transporting_vehicle_id: transportingVehicleId ? Number(transportingVehicleId) : null,
           transported_by_plate: transportedByPlate ? normalizePlate(transportedByPlate) : null,
           destination: destination || null,
-          purpose: purpose || null,
+          purpose_encrypted: encryptField(purpose === undefined ? null : parseOptionalText(purpose, 'Motivo')),
           departure_gate_id: Number(departureGateId),
           departure_operator_id: auth.userId,
           km_departure: kmDepartureValue,
           is_km_unavailable: kmUnavailable,
           fuel_level_departure: fuelLevelDeparture !== undefined ? Number(fuelLevelDeparture) : null,
-          observation: observation || null,
+          observation_encrypted: encryptField(observation || null),
         },
         trx
       )
@@ -294,7 +295,7 @@ async function registerReturn(auth, id, payload) {
   // com KM válido não pode desligar isso.
   if (kmUnavailable) changes.is_km_unavailable = true;
   if (fuelLevelReturn !== undefined) changes.fuel_level_return = Number(fuelLevelReturn);
-  if (observation !== undefined) changes.observation = observation;
+  if (observation !== undefined) changes.observation_encrypted = encryptField(observation || null);
 
   try {
     const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
@@ -304,7 +305,8 @@ async function registerReturn(auth, id, payload) {
   }
 }
 
-// destination/purpose são VARCHAR(255): texto vazio vira null.
+// destination/purpose têm até 255 caracteres (purpose é validado aqui, no
+// texto em claro — a coluna cifrada é TEXT): texto vazio vira null.
 function parseOptionalText(value, label) {
   if (value === null) return null;
   const text = String(value).trim();
@@ -339,7 +341,7 @@ async function updateLog(auth, id, payload) {
 
   const changes = {};
   if (has('destination')) changes.destination = parseOptionalText(payload.destination, 'Destino');
-  if (has('purpose')) changes.purpose = parseOptionalText(payload.purpose, 'Motivo');
+  if (has('purpose')) changes.purpose_encrypted = encryptField(parseOptionalText(payload.purpose, 'Motivo'));
 
   if (has('departureTime') || has('returnTime')) {
     const departureTime = has('departureTime')

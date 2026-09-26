@@ -107,7 +107,7 @@ async function createPerson({ companyId, name, cpf, personType = 1, isBlocked = 
       cpf_encrypted: encryptField(rawCpf),
       cpf_bindex: generateBindex(rawCpf),
       is_blocked: isBlocked,
-      block_reason: blockReason,
+      block_reason_encrypted: encryptField(blockReason),
     })
     .returning('*');
 

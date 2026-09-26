@@ -28,7 +28,7 @@ function toDTO(person) {
     // controller sem passar por isso.
     photoUrl: person.photo_url,
     isBlocked: person.is_blocked,
-    blockReason: person.block_reason,
+    blockReason: decryptField(person.block_reason_encrypted),
     createdAt: person.created_at,
     updatedAt: person.updated_at,
   };
@@ -212,7 +212,7 @@ async function setBlocked(auth, id, { isBlocked, reason }) {
       auth.companyId,
       {
         is_blocked: isBlocked,
-        block_reason: isBlocked ? reason : null,
+        block_reason_encrypted: isBlocked ? encryptField(reason) : null,
       },
       trx
     )
