@@ -395,4 +395,18 @@ async function updateLog(auth, id, payload) {
   }
 }
 
-module.exports = { list, listOnTrip, getById, getLastKm, registerDeparture, registerReturn, updateLog };
+async function listAllForDriver(companyId, driverId) {
+  const rows = await repository.listAllByDriver(companyId, driverId);
+  return withRelated(companyId, rows.map(toDTO));
+}
+
+module.exports = {
+  list,
+  listOnTrip,
+  getById,
+  getLastKm,
+  registerDeparture,
+  registerReturn,
+  updateLog,
+  listAllForDriver,
+};

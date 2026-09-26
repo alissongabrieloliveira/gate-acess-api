@@ -30,6 +30,11 @@ function baseQuery(companyId) {
   return db('fleet_logs').select(COLUMNS).where({ company_id: companyId }).whereNull('deleted_at');
 }
 
+// Exportação de dados do titular (LGPD): saídas em que a pessoa foi motorista.
+function listAllByDriver(companyId, driverId) {
+  return baseQuery(companyId).where({ driver_id: driverId }).orderBy('departure_time', 'desc');
+}
+
 function findByIdAndCompany(id, companyId) {
   return baseQuery(companyId).where({ id }).first();
 }
@@ -102,6 +107,7 @@ async function update(id, companyId, data, trx = db) {
 }
 
 module.exports = {
+  listAllByDriver,
   findByIdAndCompany,
   listByCompany,
   countByCompany,

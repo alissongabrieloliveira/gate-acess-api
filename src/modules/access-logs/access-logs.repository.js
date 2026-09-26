@@ -65,6 +65,12 @@ function countByCompany(companyId, { status, personId, entryGateId, from, to, pe
   return applyFilters(query, { status, personId, entryGateId, from, to, personIds, vehicleIds }).first();
 }
 
+// Exportação de dados do titular (LGPD): todos os registros em que a pessoa
+// aparece numa coluna (person_id = visitante, visited_person_id = anfitrião).
+function listAllByPersonColumn(companyId, column, personId) {
+  return baseQuery(companyId).where(column, personId).orderBy('entry_time', 'desc');
+}
+
 // Casa com o predicado do índice parcial idx_access_logs_active (company_id
 // WHERE status = 'ACTIVE'), então o planner do Postgres consegue usá-lo.
 function listActiveByCompany(companyId) {
@@ -102,6 +108,7 @@ async function update(id, companyId, data, trx = db) {
 }
 
 module.exports = {
+  listAllByPersonColumn,
   findByIdAndCompany,
   listByCompany,
   countByCompany,

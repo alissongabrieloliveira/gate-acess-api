@@ -43,6 +43,13 @@ async function updateOwnCompany(auth, payload) {
   if (payload.state !== undefined) changes.state = payload.state?.trim().toUpperCase() || null;
   if (payload.contactEmail !== undefined) changes.contact_email = payload.contactEmail || null;
   if (payload.contactPhone !== undefined) changes.contact_phone = payload.contactPhone || null;
+  if (payload.privacyContact !== undefined) {
+    const contact = payload.privacyContact?.trim() || null;
+    if (contact && contact.length > 255) {
+      throw new AppError('Contato de privacidade pode ter no máximo 255 caracteres', 400);
+    }
+    changes.privacy_contact = contact;
+  }
 
   if (Object.keys(changes).length === 0) {
     throw new AppError('Nenhum campo para atualizar foi enviado', 400);

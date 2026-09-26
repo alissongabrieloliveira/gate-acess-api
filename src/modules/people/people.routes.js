@@ -1,7 +1,10 @@
 const { Router } = require('express');
 const authenticate = require('../../middlewares/authenticate');
+const authorize = require('../../middlewares/authorize');
+const RULES = require('../../config/rules');
 const { uploadPersonPhoto } = require('../../middlewares/upload');
 const controller = require('./people.controller');
+const dataExportController = require('../data-export/data-export.controller');
 
 const router = Router();
 
@@ -16,5 +19,8 @@ router.get('/:id', controller.getById);
 router.put('/:id', controller.update);
 router.patch('/:id/block', controller.block);
 router.post('/:id/photo', uploadPersonPhoto.single('photo'), controller.uploadPhoto);
+// Exportação de dados do titular (LGPD): junta todo o histórico da pessoa —
+// só admin, e a própria exportação fica registrada na Auditoria.
+router.get('/:id/data-export', authorize(RULES.ADMIN), dataExportController.exportPerson);
 
 module.exports = router;

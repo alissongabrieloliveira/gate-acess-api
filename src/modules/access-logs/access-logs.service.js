@@ -494,4 +494,29 @@ async function setPhoto(auth, id, photoPath) {
   return singleDTO(log);
 }
 
-module.exports = { list, listActive, getById, getLastKm, registerEntry, registerExit, updateLog, setPhoto };
+// Exportação de dados do titular (LGPD): acessos em que a pessoa foi
+// visitante e em que foi anfitriã, sem paginação e sem URL de foto (o
+// documento exportado não depende de link temporário).
+async function listAllForPerson(companyId, personId) {
+  const [asVisitor, asHost] = await Promise.all([
+    repository.listAllByPersonColumn(companyId, 'person_id', personId),
+    repository.listAllByPersonColumn(companyId, 'visited_person_id', personId),
+  ]);
+  const [visitor, host] = await Promise.all([
+    withRelated(companyId, asVisitor.map(toDTO)),
+    withRelated(companyId, asHost.map(toDTO)),
+  ]);
+  return { asVisitor: visitor, asHost: host };
+}
+
+module.exports = {
+  list,
+  listActive,
+  getById,
+  getLastKm,
+  registerEntry,
+  registerExit,
+  updateLog,
+  setPhoto,
+  listAllForPerson,
+};
