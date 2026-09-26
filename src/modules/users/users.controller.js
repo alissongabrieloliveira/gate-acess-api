@@ -24,7 +24,7 @@ async function getById(req, res, next) {
 
 async function create(req, res, next) {
   try {
-    const user = await usersService.create(req.auth.companyId, req.body || {});
+    const user = await usersService.create(req.auth, req.body || {});
     return res.status(201).json(user);
   } catch (err) {
     return next(err);

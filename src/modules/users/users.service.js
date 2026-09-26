@@ -5,6 +5,7 @@ const { hashPassword } = require('../../utils/password');
 const { encryptField, decryptField } = require('../../utils/crypto');
 const { isValidCpf } = require('../../utils/cpf');
 const RULES = require('../../config/rules');
+const withAuthTransaction = require('../../utils/withAuthTransaction');
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -92,7 +93,7 @@ async function getById(companyId, id) {
   return toDTO(user);
 }
 
-async function create(companyId, { name, cpf, email, password, rules }) {
+async function create(auth, { name, cpf, email, password, rules }) {
   if (!name || !cpf || !email || !password) {
     throw new AppError('Nome, CPF, e-mail e senha são obrigatórios', 400);
   }
@@ -101,8 +102,9 @@ async function create(companyId, { name, cpf, email, password, rules }) {
   const passwordHash = await hashPassword(password);
 
   try {
-    const user = await repository.insert({
-      company_id: companyId,
+    // withAuthTransaction: a Auditoria registra QUEM criou/alterou o usuário.
+    const user = await withAuthTransaction(auth, (trx) => repository.insert({
+      company_id: auth.companyId,
       name_encrypted: encryptField(name),
       cpf_encrypted: encryptField(cpf),
       email_encrypted: encryptField(email),
@@ -116,7 +118,7 @@ async function create(companyId, { name, cpf, email, password, rules }) {
       // ninguém). Ver update() abaixo: só o próprio usuário pode alterar
       // senha depois de criado.
       must_change_password: true,
-    });
+    }, trx));
     return toDTO(user);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
@@ -173,7 +175,7 @@ async function update(companyId, id, auth, payload) {
   }
 
   try {
-    const user = await repository.update(id, companyId, changes);
+    const user = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
     if (!user) {
       throw new AppError('Usuário não encontrado', 404);
     }
@@ -191,7 +193,7 @@ async function remove(companyId, id, auth) {
     throw new AppError('Não é possível remover o próprio usuário', 400);
   }
 
-  const affected = await repository.softDelete(id, companyId);
+  const affected = await withAuthTransaction(auth, (trx) => repository.softDelete(id, companyId, trx));
   if (!affected) {
     throw new AppError('Usuário não encontrado', 404);
   }

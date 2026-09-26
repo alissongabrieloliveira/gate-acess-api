@@ -40,13 +40,13 @@ function listAllByCompany(companyId) {
   return db('users').select(COLUMNS).where({ company_id: companyId }).whereNull('deleted_at').orderBy('id', 'asc');
 }
 
-async function insert(data) {
-  const [row] = await db('users').insert(data).returning(COLUMNS);
+async function insert(data, trx = db) {
+  const [row] = await trx('users').insert(data).returning(COLUMNS);
   return row;
 }
 
-async function update(id, companyId, data) {
-  const [row] = await db('users')
+async function update(id, companyId, data, trx = db) {
+  const [row] = await trx('users')
     .where({ id, company_id: companyId })
     .whereNull('deleted_at')
     .update(data)
@@ -54,8 +54,8 @@ async function update(id, companyId, data) {
   return row;
 }
 
-function softDelete(id, companyId) {
-  return db('users')
+function softDelete(id, companyId, trx = db) {
+  return trx('users')
     .where({ id, company_id: companyId })
     .whereNull('deleted_at')
     .update({ deleted_at: db.fn.now(), is_active: false });
