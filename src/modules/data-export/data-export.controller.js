@@ -9,4 +9,13 @@ async function exportPerson(req, res, next) {
   }
 }
 
-module.exports = { exportPerson };
+async function exportUser(req, res, next) {
+  try {
+    const result = await dataExportService.exportUserData(req.auth, Number(req.params.id));
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { exportPerson, exportUser };

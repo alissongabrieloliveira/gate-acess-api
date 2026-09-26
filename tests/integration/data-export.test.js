@@ -129,3 +129,91 @@ describe('PUT /companies/me — contato de privacidade', () => {
     expect(tooLong.status).toBe(400);
   });
 });
+
+describe('GET /users/:id/data-export', () => {
+  let company;
+  let admin;
+  let operator;
+  let otherOperator;
+  let adminToken;
+  let operatorToken;
+
+  const tokenFor = (user) =>
+    signAccessToken({ userId: user.id, companyId: company.id, rules: user.rules, mustChangePassword: false });
+
+  beforeAll(async () => {
+    company = await createCompany();
+    admin = await createAdminUser(company.id);
+    operator = await createRegularUser(company.id);
+    otherOperator = await createRegularUser(company.id);
+    adminToken = tokenFor(admin);
+    operatorToken = tokenFor(operator);
+
+    await db('login_logs').insert([
+      { company_id: company.id, user_id: operator.id, ip_address: '10.0.0.1', user_agent: 'Chrome', status: 'SUCCESS' },
+      { company_id: company.id, user_id: operator.id, ip_address: '10.0.0.9', user_agent: 'Chrome', status: 'FAILED' },
+    ]);
+    const expiresAt = new Date(Date.now() + 86400000);
+    await db('refresh_tokens').insert(
+      [1, 2, 3].map((i) => ({
+        company_id: company.id,
+        user_id: operator.id,
+        token_hash: `hash-export-${operator.id}-${i}`,
+        expires_at: expiresAt,
+        ip_address: i < 3 ? '10.0.0.1' : '10.0.0.2',
+        user_agent: 'Chrome',
+      }))
+    );
+
+    // Uma ação do operador no sistema (vira linha de auditoria com o autor).
+    const gate = await createGate({ companyId: company.id });
+    const visitor = await createPerson({ companyId: company.id, name: 'Visitante Terceiro' });
+    const res = await request(app)
+      .post('/api/v1/access-logs')
+      .set('Authorization', `Bearer ${operatorToken}`)
+      .send({ personId: visitor.id, entryGateId: gate.id });
+    expect(res.status).toBe(201);
+  });
+
+  const exportUser = (token, id) =>
+    request(app).get(`/api/v1/users/${id}/data-export`).set('Authorization', `Bearer ${token}`);
+
+  test('o próprio operador exporta: cadastro, logins, sessões agrupadas e atividade resumida', async () => {
+    const res = await exportUser(operatorToken, operator.id);
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({ id: operator.id, email: expect.any(String), cpf: expect.any(String) });
+    expect(res.body.loginLogs).toHaveLength(2);
+    expect(res.body.loginLogs.map((l) => l.status).sort()).toEqual(['FAILED', 'SUCCESS']);
+    expect(res.body.sessions.count).toBe(3);
+    expect(res.body.sessions.ipAddresses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: '10.0.0.1', count: 2 }),
+        expect.objectContaining({ value: '10.0.0.2', count: 1 }),
+      ])
+    );
+    expect(res.body.activity).toEqual([
+      expect.objectContaining({ tableName: 'access_logs', action: 'INSERT', count: 1 }),
+    ]);
+    const body = JSON.stringify(res.body);
+    expect(body).not.toMatch(/password_hash|token_hash|hash-export|\$2[aby]\$/i);
+    expect(body).not.toContain('Visitante Terceiro');
+  });
+
+  test('operador não exporta os dados de outro operador', async () => {
+    expect((await exportUser(operatorToken, otherOperator.id)).status).toBe(403);
+  });
+
+  test('admin exporta qualquer usuário da empresa e a exportação vai pra Auditoria', async () => {
+    const res = await exportUser(adminToken, operator.id);
+    expect(res.status).toBe(200);
+    const [record] = await db('audit_logs')
+      .where({ table_name: 'users', record_id: operator.id, action: 'EXPORT', user_id: admin.id });
+    expect(record).toBeDefined();
+  });
+
+  test('usuário de outra empresa: 404', async () => {
+    const other = await createCompany();
+    const stranger = await createRegularUser(other.id);
+    expect((await exportUser(adminToken, stranger.id)).status).toBe(404);
+  });
+});
