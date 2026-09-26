@@ -234,4 +234,37 @@ async function setPhoto(auth, id, photoPath) {
   return singleDTO(vehicle);
 }
 
-module.exports = { list, getById, create, update, setBlocked, setPhoto, searchIds, normalizePlate, VEHICLE_TYPES };
+/**
+ * Resumo (id -> { id, licensePlate, brand, model, vehicleType, identificationCode }) dos veículos
+ * referenciados por registros de acesso/frota — ver people.service#summariesByIds.
+ */
+async function summariesByIds(companyId, ids) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const rows = await repository.findByIdsIncludingDeleted(unique, companyId);
+  return new Map(
+    rows.map((v) => [
+      v.id,
+      {
+        id: v.id,
+        licensePlate: v.license_plate,
+        brand: v.brand,
+        model: v.model,
+        vehicleType: v.vehicle_type,
+        identificationCode: v.identification_code,
+      },
+    ])
+  );
+}
+
+module.exports = {
+  list,
+  getById,
+  create,
+  update,
+  setBlocked,
+  setPhoto,
+  searchIds,
+  summariesByIds,
+  normalizePlate,
+  VEHICLE_TYPES,
+};

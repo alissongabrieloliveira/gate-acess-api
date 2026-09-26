@@ -10,6 +10,15 @@ function findByIdAndCompany(id, companyId) {
   return baseQuery(companyId).where({ id }).first();
 }
 
+// Busca em lote pelos ids (sem LIMIT) pra montar o resumo exibido junto dos
+// registros de acesso/frota. INCLUI soft-deletados: o histórico continua
+// mostrando quem passou, mesmo se o cadastro foi removido depois. Sempre
+// filtrado pela empresa.
+function findByIdsIncludingDeleted(ids, companyId) {
+  if (!ids.length) return Promise.resolve([]);
+  return db('gates').select(COLUMNS).where({ company_id: companyId }).whereIn('id', ids);
+}
+
 // name/description ficam em claro no banco (sem criptografia) — dá pra
 // fazer ILIKE direto, mesmo padrão já usado em vehicles.repository.js.
 function applySearch(query, search) {
@@ -47,4 +56,4 @@ async function update(id, companyId, data, trx = db) {
   return row;
 }
 
-module.exports = { findByIdAndCompany, listByCompany, countByCompany, insert, update };
+module.exports = { findByIdAndCompany, findByIdsIncludingDeleted, listByCompany, countByCompany, insert, update };

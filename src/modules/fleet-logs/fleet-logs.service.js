@@ -11,6 +11,33 @@ const vehiclesService = require('../vehicles/vehicles.service');
 const gatesRepository = require('../gates/gates.repository');
 const { normalizePlate } = vehiclesService;
 
+// id -> { id, name } de portões/setores (inclui soft-deletados, pro histórico).
+async function namesByIds(repo, companyId, ids) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const rows = await repo.findByIdsIncludingDeleted(unique, companyId);
+  return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name }]));
+}
+
+/**
+ * Anexa aos DTOs os dados de exibição do veículo, motorista, guincho
+ * cadastrado e portões, buscados em lote — ver access-logs.service#withRelated.
+ */
+async function withRelated(companyId, dtos) {
+  const [vehicles, people, gates] = await Promise.all([
+    vehiclesService.summariesByIds(companyId, dtos.flatMap((d) => [d.vehicleId, d.transportingVehicleId])),
+    peopleService.summariesByIds(companyId, dtos.map((d) => d.driverId)),
+    namesByIds(gatesRepository, companyId, dtos.flatMap((d) => [d.departureGateId, d.returnGateId])),
+  ]);
+  return dtos.map((d) => ({
+    ...d,
+    vehicle: vehicles.get(d.vehicleId) ?? null,
+    driver: d.driverId ? (people.get(d.driverId) ?? null) : null,
+    transportingVehicle: d.transportingVehicleId ? (vehicles.get(d.transportingVehicleId) ?? null) : null,
+    departureGate: gates.get(d.departureGateId) ?? null,
+    returnGate: d.returnGateId ? (gates.get(d.returnGateId) ?? null) : null,
+  }));
+}
+
 const CHECK_VIOLATION = '23514';
 const STATUS = { ON_TRIP: 'ON_TRIP', RETURNED: 'RETURNED' };
 
@@ -91,14 +118,14 @@ async function list(companyId, { page, limit, status, vehicleId, from, to, searc
   ]);
 
   return {
-    data: rows.map(toDTO),
+    data: await withRelated(companyId, rows.map(toDTO)),
     pagination: { page: safePage, limit: safeLimit, total: Number(totalRow.count) },
   };
 }
 
 async function listOnTrip(companyId) {
   const rows = await repository.listOnTripByCompany(companyId);
-  return { data: rows.map(toDTO) };
+  return { data: await withRelated(companyId, rows.map(toDTO)) };
 }
 
 async function getById(companyId, id) {
@@ -106,7 +133,8 @@ async function getById(companyId, id) {
   if (!log) {
     throw new AppError('Registro de frota não encontrado', 404);
   }
-  return toDTO(log);
+  const [dto] = await withRelated(companyId, [toDTO(log)]);
+  return dto;
 }
 
 async function registerDeparture(auth, payload) {

@@ -260,4 +260,26 @@ async function searchIds(companyId, rawTerm) {
     .map((person) => person.id);
 }
 
-module.exports = { list, getById, create, update, setBlocked, setPhoto, searchIds, PERSON_TYPES };
+/**
+ * Resumo (id -> { id, name, cpf, personType, isBlocked }) das pessoas
+ * referenciadas por registros de acesso/frota — busca exatamente os ids
+ * pedidos, sem a amostra de "até 100" que o frontend usava pra resolver nomes.
+ */
+async function summariesByIds(companyId, ids) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const rows = await repository.findByIdsIncludingDeleted(unique, companyId);
+  return new Map(
+    rows.map((p) => [
+      p.id,
+      {
+        id: p.id,
+        name: decryptField(p.name_encrypted),
+        cpf: p.cpf_encrypted ? decryptField(p.cpf_encrypted) : null,
+        personType: p.person_type,
+        isBlocked: p.is_blocked,
+      },
+    ])
+  );
+}
+
+module.exports = { list, getById, create, update, setBlocked, setPhoto, searchIds, summariesByIds, PERSON_TYPES };

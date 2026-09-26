@@ -25,6 +25,15 @@ function findByIdAndCompany(id, companyId) {
   return baseQuery(companyId).where({ id }).first();
 }
 
+// Busca em lote pelos ids (sem LIMIT) pra montar o resumo exibido junto dos
+// registros de acesso/frota. INCLUI soft-deletados: o histórico continua
+// mostrando quem passou, mesmo se o cadastro foi removido depois. Sempre
+// filtrado pela empresa.
+function findByIdsIncludingDeleted(ids, companyId) {
+  if (!ids.length) return Promise.resolve([]);
+  return db('vehicles').select(COLUMNS).where({ company_id: companyId }).whereIn('id', ids);
+}
+
 function findByPlate(licensePlate, companyId) {
   return baseQuery(companyId).where({ license_plate: licensePlate }).first();
 }
@@ -93,6 +102,7 @@ async function update(id, companyId, data, trx = db) {
 
 module.exports = {
   findByIdAndCompany,
+  findByIdsIncludingDeleted,
   findByPlate,
   findByIdentificationCode,
   listByCompany,

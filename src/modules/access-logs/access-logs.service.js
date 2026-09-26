@@ -77,6 +77,37 @@ async function singleDTO(log) {
   return dto;
 }
 
+// id -> { id, name } de portões/setores (inclui soft-deletados, pro histórico).
+async function namesByIds(repo, companyId, ids) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const rows = await repo.findByIdsIncludingDeleted(unique, companyId);
+  return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name }]));
+}
+
+/**
+ * Anexa aos DTOs os dados de exibição dos registros relacionados (pessoa,
+ * anfitrião, veículo, setor, portões), buscados em lote pelos ids da página.
+ * Antes o frontend resolvia isso contra uma amostra de "até 100" cadastros e,
+ * com mais cadastros, as linhas mostravam "Pessoa não encontrada".
+ */
+async function withRelated(companyId, dtos) {
+  const [people, vehicles, sectors, gates] = await Promise.all([
+    peopleService.summariesByIds(companyId, dtos.flatMap((d) => [d.personId, d.visitedPersonId])),
+    vehiclesService.summariesByIds(companyId, dtos.map((d) => d.vehicleId)),
+    namesByIds(sectorsRepository, companyId, dtos.map((d) => d.destinationSectorId)),
+    namesByIds(gatesRepository, companyId, dtos.flatMap((d) => [d.entryGateId, d.exitGateId])),
+  ]);
+  return dtos.map((d) => ({
+    ...d,
+    person: people.get(d.personId) ?? null,
+    visitedPerson: d.visitedPersonId ? (people.get(d.visitedPersonId) ?? null) : null,
+    vehicle: d.vehicleId ? (vehicles.get(d.vehicleId) ?? null) : null,
+    destinationSector: d.destinationSectorId ? (sectors.get(d.destinationSectorId) ?? null) : null,
+    entryGate: gates.get(d.entryGateId) ?? null,
+    exitGate: d.exitGateId ? (gates.get(d.exitGateId) ?? null) : null,
+  }));
+}
+
 /**
  * `search` (?search=, "CPF, Nome ou Placa") não existe como coluna em
  * access_logs — só person_id/vehicle_id. Resolve primeiro quais pessoas e
@@ -116,14 +147,14 @@ async function list(companyId, { page, limit, status, personId, from, to, search
   ]);
 
   return {
-    data: await attachSignedPhotoUrls(rows.map(toDTO)),
+    data: await withRelated(companyId, await attachSignedPhotoUrls(rows.map(toDTO))),
     pagination: { page: safePage, limit: safeLimit, total: Number(totalRow.count) },
   };
 }
 
 async function listActive(companyId) {
   const rows = await repository.listActiveByCompany(companyId);
-  return { data: await attachSignedPhotoUrls(rows.map(toDTO)) };
+  return { data: await withRelated(companyId, await attachSignedPhotoUrls(rows.map(toDTO))) };
 }
 
 async function getById(companyId, id) {
@@ -131,7 +162,8 @@ async function getById(companyId, id) {
   if (!log) {
     throw new AppError('Registro de acesso não encontrado', 404);
   }
-  return singleDTO(log);
+  const [dto] = await withRelated(companyId, [await singleDTO(log)]);
+  return dto;
 }
 
 /**
