@@ -181,6 +181,9 @@ async function registerDeparture(auth, payload) {
     if (driver.is_blocked) {
       throw new AppError(`Motorista bloqueado: ${decryptField(driver.block_reason_encrypted) || 'sem motivo informado'}`, 403);
     }
+    if (driver.anonymized_at) {
+      throw new AppError('Motorista anonimizado (LGPD) não pode ser usado em um registro novo', 400);
+    }
   }
 
   if (transportingVehicleId !== undefined && transportingVehicleId !== null) {

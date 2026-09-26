@@ -5,6 +5,7 @@ const RULES = require('../../config/rules');
 const { uploadPersonPhoto } = require('../../middlewares/upload');
 const controller = require('./people.controller');
 const dataExportController = require('../data-export/data-export.controller');
+const anonymizationController = require('../anonymization/anonymization.controller');
 
 const router = Router();
 
@@ -22,5 +23,7 @@ router.post('/:id/photo', uploadPersonPhoto.single('photo'), controller.uploadPh
 // Exportação de dados do titular (LGPD): junta todo o histórico da pessoa —
 // só admin, e a própria exportação fica registrada na Auditoria.
 router.get('/:id/data-export', authorize(RULES.ADMIN), dataExportController.exportPerson);
+// Anonimização a pedido do titular (LGPD art. 18) — irreversível, só admin.
+router.post('/:id/anonymize', authorize(RULES.ADMIN), anonymizationController.anonymizePerson);
 
 module.exports = router;

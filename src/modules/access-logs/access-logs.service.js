@@ -227,14 +227,20 @@ async function registerEntry(auth, payload) {
   if (person.is_blocked) {
     throw new AppError(`Pessoa bloqueada: ${decryptField(person.block_reason_encrypted) || 'sem motivo informado'}`, 403);
   }
+  if (person.anonymized_at) {
+    throw new AppError('Pessoa anonimizada (LGPD) não pode ser usada em um registro novo', 400);
+  }
 
   if (visitedPersonId !== undefined && visitedPersonId !== null) {
-    await assertBelongsToCompany(
+    const host = await assertBelongsToCompany(
       peopleRepository,
       Number(visitedPersonId),
       companyId,
       'visitedPersonId inválido: pessoa não encontrada nesta empresa'
     );
+    if (host.anonymized_at) {
+      throw new AppError('Anfitrião anonimizado (LGPD) não pode ser usado em um registro novo', 400);
+    }
   }
 
   let vehicle = null;

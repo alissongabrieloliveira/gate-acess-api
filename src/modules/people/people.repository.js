@@ -11,6 +11,7 @@ const COLUMNS = [
   'photo_url',
   'is_blocked',
   'block_reason_encrypted',
+  'anonymized_at',
   'created_at',
   'updated_at',
 ];
@@ -38,8 +39,11 @@ function findByCpfBindex(cpfBindex, companyId) {
 
 // `blocked` filtra por is_blocked (coluna plana, sem criptografia) — usado
 // pelo relatório de Pessoas Bloqueadas (ver people.service.js).
+// Listagem e busca ignoram pessoas anonimizadas (LGPD): não são mais um
+// cadastro utilizável. Os registros antigos continuam as achando por id
+// (findByIdsIncludingDeleted/findByIdAndCompany).
 function listByCompany(companyId, { limit, offset, personType, blocked }) {
-  const query = baseQuery(companyId).orderBy('id', 'asc').limit(limit).offset(offset);
+  const query = baseQuery(companyId).whereNull('anonymized_at').orderBy('id', 'asc').limit(limit).offset(offset);
   if (personType !== undefined) query.andWhere({ person_type: personType });
   if (blocked !== undefined) query.andWhere({ is_blocked: blocked });
   return query;
@@ -50,14 +54,18 @@ function listByCompany(companyId, { limit, offset, personType, blocked }) {
 // *_encrypted, não dá pra fazer ILIKE no banco) antes de paginar o
 // resultado já filtrado — ver people.service.js.
 function listAllByCompany(companyId, { personType, blocked }) {
-  const query = baseQuery(companyId).orderBy('id', 'asc');
+  const query = baseQuery(companyId).whereNull('anonymized_at').orderBy('id', 'asc');
   if (personType !== undefined) query.andWhere({ person_type: personType });
   if (blocked !== undefined) query.andWhere({ is_blocked: blocked });
   return query;
 }
 
 function countByCompany(companyId, { personType, blocked }) {
-  const query = db('people').where({ company_id: companyId }).whereNull('deleted_at').count('id as count');
+  const query = db('people')
+    .where({ company_id: companyId })
+    .whereNull('deleted_at')
+    .whereNull('anonymized_at')
+    .count('id as count');
   if (personType !== undefined) query.andWhere({ person_type: personType });
   if (blocked !== undefined) query.andWhere({ is_blocked: blocked });
   return query.first();

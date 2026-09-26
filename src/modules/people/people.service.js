@@ -29,6 +29,7 @@ function toDTO(person) {
     photoUrl: person.photo_url,
     isBlocked: person.is_blocked,
     blockReason: decryptField(person.block_reason_encrypted),
+    isAnonymized: Boolean(person.anonymized_at),
     createdAt: person.created_at,
     updatedAt: person.updated_at,
   };
@@ -162,7 +163,21 @@ async function create(auth, { personType, name, cpf, rg, phone, photoUrl }) {
   }
 }
 
+// Pessoa anonimizada (LGPD) não volta a receber dados: editar, bloquear ou
+// trocar a foto recriaria exatamente o que foi removido a pedido do titular.
+async function assertEditable(companyId, id) {
+  const person = await repository.findByIdAndCompany(id, companyId);
+  if (!person) {
+    throw new AppError('Pessoa não encontrada', 404);
+  }
+  if (person.anonymized_at) {
+    throw new AppError('Pessoa anonimizada não pode ser alterada', 409);
+  }
+  return person;
+}
+
 async function update(auth, id, payload) {
+  await assertEditable(auth.companyId, id);
   const changes = {};
 
   if (payload.personType !== undefined) {
@@ -199,6 +214,7 @@ async function update(auth, id, payload) {
 }
 
 async function setBlocked(auth, id, { isBlocked, reason }) {
+  await assertEditable(auth.companyId, id);
   if (isBlocked === undefined) {
     throw new AppError('isBlocked é obrigatório', 400);
   }
@@ -229,10 +245,7 @@ async function setBlocked(auth, id, { isBlocked, reason }) {
 // foto antiga é best-effort (utils/supabaseStorage.js#deletePhoto nunca
 // lança), então não bloqueia a troca se falhar.
 async function setPhoto(auth, id, photoPath) {
-  const existing = await repository.findByIdAndCompany(id, auth.companyId);
-  if (!existing) {
-    throw new AppError('Pessoa não encontrada', 404);
-  }
+  const existing = await assertEditable(auth.companyId, id);
   if (existing.photo_url) {
     await deleteStoragePhoto(existing.photo_url);
   }
