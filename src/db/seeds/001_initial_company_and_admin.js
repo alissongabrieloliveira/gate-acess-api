@@ -70,9 +70,15 @@ exports.seed = async function seed(knex) {
         email_bindex: emailBindex,
         password_hash: passwordHash,
         rules: adminRules,
+        // A senha do seed passa por variável de ambiente/terminal — vale só
+        // pro primeiro acesso, igual à senha temporária de usuário criado
+        // pela tela de Usuários.
+        must_change_password: true,
       })
       .returning(['id']);
 
-    console.log(`[seed] Usuário administrador criado: id=${user.id} (empresa id=${company.id})`);
+    console.log(
+      `[seed] Usuário administrador criado: id=${user.id} (empresa id=${company.id}) — troca de senha obrigatória no primeiro login`
+    );
   });
 };
