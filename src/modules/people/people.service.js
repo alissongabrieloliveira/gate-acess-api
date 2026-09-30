@@ -60,8 +60,13 @@ function assertValidCpf(cpf) {
 // Compartilhado entre list() (busca paginada) e searchIds() (usado por
 // access-logs/fleet-logs pra resolver "essa pessoa bate com o termo
 // buscado?"). `term`/`digitsTerm` já vêm normalizados pelo chamador.
+// Nome comparado sem acento ("joao" acha "João"), igual à busca de cidades.
+function stripAccents(text) {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 function matchesSearch(person, term, digitsTerm) {
-  if (person.name?.toLowerCase().includes(term)) return true;
+  if (person.name && stripAccents(person.name.toLowerCase()).includes(stripAccents(term))) return true;
   if (!digitsTerm) return false;
   return person.cpf?.includes(digitsTerm) || person.phone?.includes(digitsTerm);
 }

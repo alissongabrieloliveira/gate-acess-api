@@ -72,6 +72,15 @@ describe('Pessoas (people) — CRUD, busca e bloqueio', () => {
       expect(res.body.data.map((p) => p.id)).toContain(searchable.id);
     });
 
+    test('ignora acentos no nome, nos dois sentidos', async () => {
+      const accented = await createPerson({ companyId: company.id, name: 'Joãozinho Açaí Único' });
+      for (const search of ['joaozinho acai', 'JOÃOZINHO AÇAÍ ÚNICO']) {
+        const res = await request(app).get('/api/v1/people').query({ search }).set('Authorization', `Bearer ${token}`);
+        expect(res.status).toBe(200);
+        expect(res.body.data.map((p) => p.id)).toContain(accented.id);
+      }
+    });
+
     test('encontra por dígitos do CPF', async () => {
       const res = await request(app).get('/api/v1/people').query({ search: '555.666.777-88' }).set('Authorization', `Bearer ${token}`);
       expect(res.status).toBe(200);
