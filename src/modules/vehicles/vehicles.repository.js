@@ -46,12 +46,25 @@ function findByIdentificationCode(identificationCode, companyId) {
 // (diferente de people) — dá pra fazer ILIKE direto, sem precisar decriptar
 // nada. Placa busca pelo valor sem pontuação (armazenado sempre normalizado),
 // os outros três campos casam com o termo literal.
+// Identificação comparada só pelas letras/números ("CM-12", "cm 12" e "CM12"
+// batem entre si), igual à placa — que já é gravada sem traço.
+const IDENTIFICATION_ALNUM = "regexp_replace(identification_code, '[^a-zA-Z0-9]', '', 'g')";
+
+function onlyAlnum(term) {
+  return String(term ?? '').replace(/[^a-zA-Z0-9]/g, '');
+}
+
+// Placa OU número de identificação (o mesmo campo de busca serve pros dois).
+function wherePlateOrIdentification(qb, alnum) {
+  qb.orWhereILike('license_plate', `%${alnum}%`).orWhereRaw(`${IDENTIFICATION_ALNUM} ILIKE ?`, [`%${alnum}%`]);
+}
+
 function applySearch(query, search) {
   if (!search) return query;
   const term = `%${search}%`;
-  const plateDigits = search.replace(/[^a-zA-Z0-9]/g, '');
+  const alnum = onlyAlnum(search);
   return query.andWhere((qb) => {
-    if (plateDigits) qb.orWhereILike('license_plate', `%${plateDigits}%`);
+    if (alnum) wherePlateOrIdentification(qb, alnum);
     qb.orWhereILike('identification_code', term).orWhereILike('brand', term).orWhereILike('model', term);
   });
 }
@@ -70,17 +83,17 @@ function countByCompany(companyId, { vehicleType, operationStatus, search }) {
   return applySearch(query, search).first();
 }
 
-// Usado por access-logs/fleet-logs pra resolver "essa placa bate com o termo
-// buscado?" sem duplicar a placa em claro em outra tabela — retorna só os
-// ids, que entram num WHERE vehicle_id IN (...) na tabela de log.
+// Usado por access-logs/fleet-logs pra resolver "essa placa/identificação
+// bate com o termo buscado?" sem duplicar esses dados em outra tabela —
+// retorna só os ids, que entram num WHERE vehicle_id IN (...) na tabela de log.
 async function findIdsByPlateLike(companyId, rawTerm) {
-  const plateDigits = String(rawTerm ?? '').replace(/[^a-zA-Z0-9]/g, '');
-  if (!plateDigits) return [];
+  const alnum = onlyAlnum(rawTerm);
+  if (!alnum) return [];
   const rows = await db('vehicles')
     .select('id')
     .where({ company_id: companyId })
     .whereNull('deleted_at')
-    .whereILike('license_plate', `%${plateDigits}%`);
+    .andWhere((qb) => wherePlateOrIdentification(qb, alnum));
   return rows.map((row) => row.id);
 }
 

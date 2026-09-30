@@ -104,6 +104,18 @@ describe('Veículos (vehicles) — CRUD, normalização de placa, tipo e bloquei
     expect(res.body.data[0].identificationCode).toBe('810');
   });
 
+  test('GET /vehicles?search= acha pela identificação, ignorando traço/espaço', async () => {
+    await request(app)
+      .post('/api/v1/vehicles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ licensePlate: 'IDT0004', identificationCode: 'CM-4521' });
+    for (const search of ['CM-4521', 'cm 4521', 'cm4521', '4521']) {
+      const res = await request(app).get('/api/v1/vehicles').query({ search }).set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.map((v) => v.identificationCode)).toContain('CM-4521');
+    }
+  });
+
   test('GET /vehicles?vehicleType= filtra pelo tipo; valor inválido -> 400', async () => {
     await createVehicle({ companyId: company.id, vehicleType: 2, licensePlate: 'FRT0001' });
 

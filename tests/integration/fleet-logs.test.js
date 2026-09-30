@@ -477,6 +477,19 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
     expect(res.body.data.some((l) => l.destination === 'Cidade Única da Busca - MT')).toBe(true);
   });
 
+  test('GET /fleet-logs?search= encontra pelo número de identificação do veículo', async () => {
+    const vehicle = await fleetVehicle();
+    await db('vehicles').where({ id: vehicle.id }).update({ identification_code: 'FR-9087' });
+    const created = await postDeparture({ vehicleId: vehicle.id });
+
+    const res = await request(app)
+      .get('/api/v1/fleet-logs')
+      .query({ search: 'fr9087' })
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((l) => l.id)).toContain(created.body.id);
+  });
+
   test('registro de outra empresa não é visível (isolamento de tenant)', async () => {
     const otherCompany = await createCompany();
     const otherAdmin = await createAdminUser(otherCompany.id);

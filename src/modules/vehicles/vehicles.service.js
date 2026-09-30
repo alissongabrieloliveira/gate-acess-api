@@ -121,8 +121,8 @@ async function list(companyId, { page, limit, vehicleType, operationStatus, plat
 }
 
 // Resolve ids de veículos cuja placa bate com um termo livre — reaproveitado
-// por access-logs/fleet-logs pra buscar "por placa" sem duplicar a lógica de
-// comparação (placa fica em claro no banco, então basta ILIKE).
+// por access-logs/fleet-logs pra buscar "por placa ou identificação" sem
+// duplicar a lógica de comparação (ficam em claro no banco, então basta ILIKE).
 function searchIds(companyId, term) {
   return repository.findIdsByPlateLike(companyId, term);
 }
