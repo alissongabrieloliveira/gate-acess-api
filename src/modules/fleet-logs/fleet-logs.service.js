@@ -10,6 +10,7 @@ const peopleService = require('../people/people.service');
 const vehiclesRepository = require('../vehicles/vehicles.repository');
 const vehiclesService = require('../vehicles/vehicles.service');
 const gatesRepository = require('../gates/gates.repository');
+const citiesRepository = require('../cities/cities.repository');
 const { normalizePlate } = vehiclesService;
 
 // id -> { id, name } de portões/setores (inclui soft-deletados, pro histórico).
@@ -177,6 +178,27 @@ function parseNoReturnReason(value, label) {
   return value;
 }
 
+/**
+ * Destino é sempre uma cidade do cadastro do IBGE (`destinationCityId`),
+ * gravada no formato padrão "Nome - UF" — texto livre fazia o mesmo destino
+ * aparecer de vários jeitos ("Vila", "Vila Propício - GO"...). `undefined` =
+ * não informado; `null` = sem destino.
+ */
+async function resolveDestination(payload) {
+  if (payload.destination !== undefined) {
+    throw new AppError('Escolha o destino na lista de cidades (destinationCityId)', 400);
+  }
+  const { destinationCityId } = payload;
+  if (destinationCityId === undefined) return undefined;
+  if (destinationCityId === null || destinationCityId === '') return null;
+  const cityId = Number(destinationCityId);
+  const city = Number.isInteger(cityId) && cityId > 0 ? await citiesRepository.findById(cityId) : null;
+  if (!city) {
+    throw new AppError('Destino inválido: cidade não encontrada', 400);
+  }
+  return `${city.name} - ${city.state_abbr}`;
+}
+
 function formatDepartureDate(value) {
   return new Date(value).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 }
@@ -238,7 +260,6 @@ async function registerDeparture(auth, payload) {
     carriedVehiclePlate,
     carriedNoReturnReason,
     noReturnReason,
-    destination,
     purpose,
     departureGateId,
     kmDeparture,
@@ -298,6 +319,7 @@ async function registerDeparture(auth, payload) {
   );
 
   const purposeText = purpose === undefined ? null : parseOptionalText(purpose, 'Motivo');
+  const destination = (await resolveDestination(payload)) ?? null;
   // O odômetro do veículo levado em cima não anda: a saída dele herda o
   // último KM conhecido (a volta, rodando, é conferida contra esse valor).
   const carriedLastKm = carriedVehicleId
@@ -313,7 +335,7 @@ async function registerDeparture(auth, payload) {
           vehicle_id: Number(vehicleId),
           driver_id: Number(driverId),
           carried_vehicle_plate: carriedPlate,
-          destination: destination || null,
+          destination,
           purpose_encrypted: encryptField(purposeText),
           departure_time: departureTime,
           departure_gate_id: Number(departureGateId),
@@ -339,7 +361,7 @@ async function registerDeparture(auth, payload) {
             driver_id: null,
             transporting_vehicle_id: Number(vehicleId),
             transport_log_id: main.id,
-            destination: destination || null,
+            destination,
             purpose_encrypted: encryptField(purposeText),
             departure_time: departureTime,
             departure_gate_id: Number(departureGateId),
@@ -436,8 +458,8 @@ async function registerReturn(auth, id, payload) {
   }
 }
 
-// destination/purpose têm até 255 caracteres (purpose é validado aqui, no
-// texto em claro — a coluna cifrada é TEXT): texto vazio vira null.
+// purpose tem até 255 caracteres (validado aqui, no texto em claro — a
+// coluna cifrada é TEXT): texto vazio vira null.
 function parseOptionalText(value, label) {
   if (value === null) return null;
   const text = String(value).trim();
@@ -450,8 +472,8 @@ function parseOptionalText(value, label) {
 /**
  * Correção de um registro de frota (só admin — ver routes): veículo e
  * motorista (troca por outro cadastro — corrigir o cadastro em si é em
- * Cadastros), KM de saída/retorno, flag "KM indisponível", destino, motivo
- * e datas de saída/retorno.
+ * Cadastros), KM de saída/retorno, flag "KM indisponível", destino (cidade
+ * do cadastro), motivo e datas de saída/retorno.
  * Atualização parcial (campo ausente = mantém). Mesmas regras da saída/
  * retorno: KM sempre obrigatório salvo "KM indisponível", retorno
  * estritamente maior que a saída. O antes/depois fica na Auditoria.
@@ -509,7 +531,8 @@ async function updateLog(auth, id, payload) {
     }
     changes.vehicle_id = vehicle.id;
   }
-  if (has('destination')) changes.destination = parseOptionalText(payload.destination, 'Destino');
+  const destination = await resolveDestination(payload);
+  if (destination !== undefined) changes.destination = destination;
   if (has('purpose')) changes.purpose_encrypted = encryptField(parseOptionalText(payload.purpose, 'Motivo'));
 
   if (has('departureTime') || has('returnTime')) {

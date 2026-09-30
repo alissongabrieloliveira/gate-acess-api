@@ -10,6 +10,7 @@ const {
   createVehicle,
   createGate,
   createSector,
+  createCity,
 } = require('../helpers/factories');
 
 const PERSON_TYPE_EMPLOYEE = 3;
@@ -214,7 +215,7 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       const dep = await request(app)
         .post('/api/v1/fleet-logs')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ vehicleId: vehicle.id, driverId: driver.id, departureGateId: gate.id, kmDeparture: 5000, destination: 'Goiânia' });
+        .send({ vehicleId: vehicle.id, driverId: driver.id, departureGateId: gate.id, kmDeparture: 5000 });
       if (!returned) return dep.body;
       const ret = await request(app)
         .patch(`/api/v1/fleet-logs/${dep.body.id}/return`)
@@ -272,18 +273,19 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       const log = await createTrip();
       const departureTime = minutesAgo(300);
       const returnTime = minutesAgo(100);
+      const city = await createCity({ name: 'Anápolis', stateAbbr: 'GO' });
 
       const res = await put(log.id, {
         kmDeparture: 6000,
         kmReturn: 6150,
-        destination: '  Anápolis ',
+        destinationCityId: city.id,
         purpose: 'Entrega',
         departureTime,
         returnTime,
       });
 
       expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({ kmDeparture: 6000, kmReturn: 6150, destination: 'Anápolis', purpose: 'Entrega' });
+      expect(res.body).toMatchObject({ kmDeparture: 6000, kmReturn: 6150, destination: 'Anápolis - GO', purpose: 'Entrega' });
       expect(new Date(res.body.departureTime).toISOString()).toBe(departureTime);
       expect(new Date(res.body.returnTime).toISOString()).toBe(returnTime);
     });
@@ -307,7 +309,8 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       const log = await createTrip({ returned: false });
       expect((await put(log.id, { kmReturn: 5200 })).status).toBe(400);
       expect((await put(log.id, { returnTime: minutesAgo(1) })).status).toBe(400);
-      expect((await put(log.id, { destination: 'Brasília' })).status).toBe(200);
+      const city = await createCity({ name: 'Brasília', stateAbbr: 'DF' });
+      expect((await put(log.id, { destinationCityId: city.id })).status).toBe(200);
     });
 
     test('retorno antes da saída -> 400', async () => {
@@ -316,9 +319,12 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       expect(res.status).toBe(400);
     });
 
-    test('destino com mais de 255 caracteres -> 400', async () => {
+    test('destino em texto livre -> 400; destinationCityId null limpa o destino', async () => {
       const log = await createTrip();
-      expect((await put(log.id, { destination: 'x'.repeat(256) })).status).toBe(400);
+      expect((await put(log.id, { destination: 'Brasília' })).status).toBe(400);
+      const cleared = await put(log.id, { destinationCityId: null });
+      expect(cleared.status).toBe(200);
+      expect(cleared.body.destination).toBeNull();
     });
   });
 });

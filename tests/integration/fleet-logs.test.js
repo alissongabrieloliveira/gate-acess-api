@@ -3,7 +3,15 @@ const request = require('supertest');
 const app = require('../../src/app');
 const db = require('../helpers/db');
 const { signAccessToken } = require('../../src/utils/jwt');
-const { createCompany, createAdminUser, createUser, createPerson, createVehicle, createGate } = require('../helpers/factories');
+const {
+  createCompany,
+  createAdminUser,
+  createUser,
+  createPerson,
+  createVehicle,
+  createGate,
+  createCity,
+} = require('../helpers/factories');
 
 const PERSON_TYPE_EMPLOYEE = 3;
 
@@ -13,6 +21,7 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
   let token;
   let gate;
   let driver;
+  let city;
 
   beforeAll(async () => {
     company = await createCompany();
@@ -20,6 +29,7 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
     token = signAccessToken({ userId: admin.id, companyId: company.id, rules: admin.rules, mustChangePassword: false });
     gate = await createGate({ companyId: company.id });
     driver = await createPerson({ companyId: company.id, name: 'Motorista Frota', personType: PERSON_TYPE_EMPLOYEE });
+    city = await createCity({ name: 'Vila Propício', stateAbbr: 'GO' });
   });
 
   afterAll(async () => {
@@ -88,14 +98,27 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
     const res = await postDeparture({
       vehicleId: vehicle.id,
       departureOperatorId: otherAdmin.id,
-      destination: 'Filial Sul',
+      destinationCityId: city.id,
       kmDeparture: 5000,
       fuelLevelDeparture: 80,
     });
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('ON_TRIP');
+    expect(res.body.destination).toBe('Vila Propício - GO');
     expect(res.body.driverId).toBe(driver.id);
     expect(res.body.departureOperatorId).toBe(admin.id);
+  });
+
+  test('destino só da lista de cidades: texto livre ou cidade inexistente -> 400', async () => {
+    const vehicle = await fleetVehicle();
+    const freeText = await postDeparture({ vehicleId: vehicle.id, destination: 'Vila' });
+    expect(freeText.status).toBe(400);
+    expect(freeText.body.error).toMatch(/lista de cidades/);
+    expect((await postDeparture({ vehicleId: vehicle.id, destinationCityId: 999999999 })).status).toBe(400);
+    expect((await postDeparture({ vehicleId: vehicle.id, destinationCityId: 'abc' })).status).toBe(400);
+    const noDestination = await postDeparture({ vehicleId: vehicle.id });
+    expect(noDestination.status).toBe(201);
+    expect(noDestination.body.destination).toBeNull();
   });
 
   test('veículo que já está na rua não pode ter outra saída -> 409', async () => {
@@ -135,7 +158,7 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
       const past = await postDeparture({ vehicleId: carried.id, kmDeparture: 7000 });
       await postReturn(past.body.id, { returnGateId: gate.id, kmReturn: 7200 });
 
-      const res = await postDeparture({ vehicleId: towTruck.id, carriedVehicleId: carried.id, destination: 'Oficina' });
+      const res = await postDeparture({ vehicleId: towTruck.id, carriedVehicleId: carried.id, destinationCityId: city.id });
       expect(res.status).toBe(201);
       expect(res.body.vehicleId).toBe(towTruck.id);
       expect(res.body.driverId).toBe(driver.id);
@@ -147,7 +170,7 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
         transporting_vehicle_id: towTruck.id,
         status: 'ON_TRIP',
         km_departure: 7200,
-        destination: 'Oficina',
+        destination: 'Vila Propício - GO',
       });
 
       const detail = await request(app).get(`/api/v1/fleet-logs/${res.body.id}`).set('Authorization', `Bearer ${token}`);
@@ -442,14 +465,15 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
 
   test('GET /fleet-logs?search= encontra pelo destino (coluna própria, sem depender de motorista/veículo)', async () => {
     const vehicle = await fleetVehicle();
-    await postDeparture({ vehicleId: vehicle.id, destination: 'Depósito Central Único' });
+    const uniqueCity = await createCity({ name: 'Cidade Única da Busca', stateAbbr: 'MT' });
+    await postDeparture({ vehicleId: vehicle.id, destinationCityId: uniqueCity.id });
 
     const res = await request(app)
       .get('/api/v1/fleet-logs')
-      .query({ search: 'Depósito Central' })
+      .query({ search: 'Única da Busca' })
       .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.some((l) => l.destination === 'Depósito Central Único')).toBe(true);
+    expect(res.body.data.some((l) => l.destination === 'Cidade Única da Busca - MT')).toBe(true);
   });
 
   test('registro de outra empresa não é visível (isolamento de tenant)', async () => {

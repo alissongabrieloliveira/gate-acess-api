@@ -128,6 +128,14 @@ async function createVehicle({ companyId, licensePlate, brand, model, vehicleTyp
   return row;
 }
 
+// cities é global (não tem company_id) e não é truncada entre execuções.
+async function createCity({ name, stateAbbr = 'GO' } = {}) {
+  const [row] = await db('cities')
+    .insert({ name: name ?? `Cidade Teste ${uniqueSuffix()}`, state_abbr: stateAbbr })
+    .returning('*');
+  return row;
+}
+
 async function createGate({ companyId, name, description = null, isActive = true } = {}) {
   const [row] = await db('gates')
     .insert({
@@ -163,4 +171,5 @@ module.exports = {
   createVehicle,
   createGate,
   createSector,
+  createCity,
 };

@@ -21,4 +21,8 @@ function count({ search }) {
   return query.first();
 }
 
-module.exports = { listAll, count };
+function findById(id) {
+  return baseQuery().where({ id }).first();
+}
+
+module.exports = { listAll, count, findById };
