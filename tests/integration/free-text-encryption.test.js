@@ -2,7 +2,7 @@ const request = require('supertest');
 const app = require('../../src/app');
 const db = require('../helpers/db');
 const { signAccessToken } = require('../../src/utils/jwt');
-const { createCompany, createAdminUser, createPerson, createVehicle, createGate } = require('../helpers/factories');
+const { createCompany, createAdminUser, createPerson, createVehicle, createGate, testCityId } = require('../helpers/factories');
 
 const VEHICLE_TYPE_FLEET = 2;
 
@@ -94,6 +94,7 @@ describe('Campos de texto livre criptografados', () => {
     const vehicle = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
     const driver = await createPerson({ companyId: company.id, personType: 3 });
     const created = await auth(request(app).post('/api/v1/fleet-logs')).send({
+      destinationCityId: await testCityId(),
       vehicleId: vehicle.id,
       driverId: driver.id,
       departureGateId: gate.id,
@@ -112,6 +113,7 @@ describe('Campos de texto livre criptografados', () => {
     await expectNotInClear('fleet_logs', created.body.id, 'reclamou de dor');
 
     const tooLong = await auth(request(app).post('/api/v1/fleet-logs')).send({
+      destinationCityId: await testCityId(),
       vehicleId: (await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET })).id,
       driverId: driver.id,
       departureGateId: gate.id,

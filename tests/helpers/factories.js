@@ -128,12 +128,23 @@ async function createVehicle({ companyId, licensePlate, brand, model, vehicleTyp
   return row;
 }
 
-// cities é global (não tem company_id) e não é truncada entre execuções.
+// cities é global (não tem company_id) e não é truncada entre execuções:
+// nome fixo já criado numa execução anterior é reaproveitado.
 async function createCity({ name, stateAbbr = 'GO' } = {}) {
   const [row] = await db('cities')
     .insert({ name: name ?? `Cidade Teste ${uniqueSuffix()}`, state_abbr: stateAbbr })
+    .onConflict(['name', 'state_abbr'])
+    .merge()
     .returning('*');
   return row;
+}
+
+// Destino é obrigatório na saída de frota: uma cidade por arquivo de teste
+// basta pra quem só precisa de um destino válido.
+let testCityPromise;
+async function testCityId() {
+  testCityPromise ??= createCity({ name: `Destino Teste ${uniqueSuffix()}` });
+  return (await testCityPromise).id;
 }
 
 async function createGate({ companyId, name, description = null, isActive = true } = {}) {
@@ -172,4 +183,5 @@ module.exports = {
   createGate,
   createSector,
   createCity,
+  testCityId,
 };

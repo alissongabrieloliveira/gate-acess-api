@@ -10,6 +10,7 @@ const {
   createPerson,
   createVehicle,
   createGate,
+  testCityId,
 } = require('../helpers/factories');
 
 const PERSON_TYPE_EMPLOYEE = 3;
@@ -74,6 +75,7 @@ describe('POST /people/:id/anonymize', () => {
       .returning('id');
 
     const trip = await auth(request(app).post('/api/v1/fleet-logs')).send({
+      destinationCityId: await testCityId(),
       vehicleId: fleetCar.id,
       driverId: person.id,
       departureGateId: gate.id,
@@ -187,6 +189,7 @@ describe('POST /people/:id/anonymize', () => {
     const driver = await createPerson({ companyId: company.id, personType: PERSON_TYPE_EMPLOYEE });
     const car = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
     await auth(request(app).post('/api/v1/fleet-logs')).send({
+      destinationCityId: await testCityId(),
       vehicleId: car.id,
       driverId: driver.id,
       departureGateId: gate.id,

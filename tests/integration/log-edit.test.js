@@ -11,6 +11,7 @@ const {
   createGate,
   createSector,
   createCity,
+  testCityId,
 } = require('../helpers/factories');
 
 const PERSON_TYPE_EMPLOYEE = 3;
@@ -215,7 +216,13 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       const dep = await request(app)
         .post('/api/v1/fleet-logs')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ vehicleId: vehicle.id, driverId: driver.id, departureGateId: gate.id, kmDeparture: 5000 });
+        .send({
+          vehicleId: vehicle.id,
+          driverId: driver.id,
+          departureGateId: gate.id,
+          kmDeparture: 5000,
+          destinationCityId: await testCityId(),
+        });
       if (!returned) return dep.body;
       const ret = await request(app)
         .patch(`/api/v1/fleet-logs/${dep.body.id}/return`)
@@ -259,7 +266,14 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       const dep = await request(app)
         .post('/api/v1/fleet-logs')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ vehicleId: tow.id, driverId: driver.id, carriedVehicleId: carried.id, departureGateId: gate.id, kmDeparture: 10 });
+        .send({
+          vehicleId: tow.id,
+          driverId: driver.id,
+          carriedVehicleId: carried.id,
+          departureGateId: gate.id,
+          kmDeparture: 10,
+          destinationCityId: await testCityId(),
+        });
       expect(dep.status).toBe(201);
 
       expect((await put(dep.body.id, { vehicleId: newTow.id })).status).toBe(200);
@@ -319,12 +333,18 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       expect(res.status).toBe(400);
     });
 
-    test('destino em texto livre -> 400; destinationCityId null limpa o destino', async () => {
+    test('destino em texto livre -> 400; apagar o destino (null) -> 400', async () => {
       const log = await createTrip();
       expect((await put(log.id, { destination: 'Brasília' })).status).toBe(400);
-      const cleared = await put(log.id, { destinationCityId: null });
-      expect(cleared.status).toBe(200);
-      expect(cleared.body.destination).toBeNull();
+      expect((await put(log.id, { destinationCityId: null })).status).toBe(400);
+    });
+
+    test('registro antigo sem destino continua editável nos outros campos', async () => {
+      const log = await createTrip();
+      await db('fleet_logs').where({ id: log.id }).update({ destination: null });
+      const res = await put(log.id, { purpose: 'Correção' });
+      expect(res.status).toBe(200);
+      expect(res.body.destination).toBeNull();
     });
   });
 });

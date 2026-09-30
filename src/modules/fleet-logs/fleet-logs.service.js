@@ -182,7 +182,7 @@ function parseNoReturnReason(value, label) {
  * Destino é sempre uma cidade do cadastro do IBGE (`destinationCityId`),
  * gravada no formato padrão "Nome - UF" — texto livre fazia o mesmo destino
  * aparecer de vários jeitos ("Vila", "Vila Propício - GO"...). `undefined` =
- * não informado; `null` = sem destino.
+ * não informado; `null` = sem destino (os chamadores exigem o destino).
  */
 async function resolveDestination(payload) {
   if (payload.destination !== undefined) {
@@ -319,7 +319,10 @@ async function registerDeparture(auth, payload) {
   );
 
   const purposeText = purpose === undefined ? null : parseOptionalText(purpose, 'Motivo');
-  const destination = (await resolveDestination(payload)) ?? null;
+  const destination = await resolveDestination(payload);
+  if (!destination) {
+    throw new AppError('Informe o destino (cidade)', 400);
+  }
   // O odômetro do veículo levado em cima não anda: a saída dele herda o
   // último KM conhecido (a volta, rodando, é conferida contra esse valor).
   const carriedLastKm = carriedVehicleId
@@ -532,6 +535,11 @@ async function updateLog(auth, id, payload) {
     changes.vehicle_id = vehicle.id;
   }
   const destination = await resolveDestination(payload);
+  // Destino é obrigatório: dá pra trocar, não pra apagar (registros antigos
+  // sem destino continuam editáveis nos outros campos).
+  if (destination === null) {
+    throw new AppError('Informe o destino (cidade)', 400);
+  }
   if (destination !== undefined) changes.destination = destination;
   if (has('purpose')) changes.purpose_encrypted = encryptField(parseOptionalText(payload.purpose, 'Motivo'));
 

@@ -43,7 +43,7 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
     return request(app)
       .post('/api/v1/fleet-logs')
       .set('Authorization', `Bearer ${authToken}`)
-      .send({ driverId: driver.id, departureGateId: gate.id, kmDeparture: 1000, ...body });
+      .send({ driverId: driver.id, departureGateId: gate.id, kmDeparture: 1000, destinationCityId: city.id, ...body });
   }
 
   function postReturn(id, body) {
@@ -109,16 +109,17 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
     expect(res.body.departureOperatorId).toBe(admin.id);
   });
 
-  test('destino só da lista de cidades: texto livre ou cidade inexistente -> 400', async () => {
+  test('destino obrigatório e só da lista de cidades: vazio, texto livre ou cidade inexistente -> 400', async () => {
     const vehicle = await fleetVehicle();
     const freeText = await postDeparture({ vehicleId: vehicle.id, destination: 'Vila' });
     expect(freeText.status).toBe(400);
     expect(freeText.body.error).toMatch(/lista de cidades/);
     expect((await postDeparture({ vehicleId: vehicle.id, destinationCityId: 999999999 })).status).toBe(400);
     expect((await postDeparture({ vehicleId: vehicle.id, destinationCityId: 'abc' })).status).toBe(400);
-    const noDestination = await postDeparture({ vehicleId: vehicle.id });
-    expect(noDestination.status).toBe(201);
-    expect(noDestination.body.destination).toBeNull();
+    const noDestination = await postDeparture({ vehicleId: vehicle.id, destinationCityId: undefined });
+    expect(noDestination.status).toBe(400);
+    expect(noDestination.body.error).toMatch(/Informe o destino/);
+    expect((await postDeparture({ vehicleId: vehicle.id, destinationCityId: null })).status).toBe(400);
   });
 
   test('veículo que já está na rua não pode ter outra saída -> 409', async () => {
@@ -491,7 +492,13 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
     const created = await request(app)
       .post('/api/v1/fleet-logs')
       .set('Authorization', `Bearer ${otherToken}`)
-      .send({ vehicleId: otherVehicle.id, driverId: otherDriver.id, kmDeparture: 1000, departureGateId: otherGate.id });
+      .send({
+        vehicleId: otherVehicle.id,
+        driverId: otherDriver.id,
+        kmDeparture: 1000,
+        departureGateId: otherGate.id,
+        destinationCityId: city.id,
+      });
     expect(created.status).toBe(201);
 
     const res = await request(app).get(`/api/v1/fleet-logs/${created.body.id}`).set('Authorization', `Bearer ${token}`);

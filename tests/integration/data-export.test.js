@@ -9,6 +9,7 @@ const {
   createPerson,
   createVehicle,
   createGate,
+  testCityId,
 } = require('../helpers/factories');
 
 const PERSON_TYPE_EMPLOYEE = 3;
@@ -56,6 +57,7 @@ describe('GET /people/:id/data-export', () => {
     expect(asHost.status).toBe(201);
     const fleetVehicle = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
     const asDriver = await auth(request(app).post('/api/v1/fleet-logs')).send({
+      destinationCityId: await testCityId(),
       vehicleId: fleetVehicle.id,
       driverId: person.id,
       departureGateId: gate.id,

@@ -9,6 +9,7 @@ const {
   createVehicle,
   createGate,
   createSector,
+  testCityId,
 } = require('../helpers/factories');
 
 const PERSON_TYPE_EMPLOYEE = 3;
@@ -87,6 +88,7 @@ describe('Registros de acesso/frota trazem os dados relacionados (sem amostra de
     const driver = await createPerson({ companyId: company.id, name: 'Motorista Teste', personType: PERSON_TYPE_EMPLOYEE });
 
     const created = await auth(request(app).post('/api/v1/fleet-logs')).send({
+      destinationCityId: await testCityId(),
       vehicleId: tow.id,
       driverId: driver.id,
       carriedVehicleId: carried.id,
