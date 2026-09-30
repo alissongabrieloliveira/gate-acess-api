@@ -448,8 +448,10 @@ function parseOptionalText(value, label) {
 }
 
 /**
- * Correção de um registro de frota (só admin — ver routes): KM de saída/
- * retorno, flag "KM indisponível", destino, motivo e datas de saída/retorno.
+ * Correção de um registro de frota (só admin — ver routes): veículo e
+ * motorista (troca por outro cadastro — corrigir o cadastro em si é em
+ * Cadastros), KM de saída/retorno, flag "KM indisponível", destino, motivo
+ * e datas de saída/retorno.
  * Atualização parcial (campo ausente = mantém). Mesmas regras da saída/
  * retorno: KM sempre obrigatório salvo "KM indisponível", retorno
  * estritamente maior que a saída. O antes/depois fica na Auditoria.
@@ -489,6 +491,23 @@ async function updateLog(auth, id, payload) {
       throw new AppError('Motorista anonimizado (LGPD) não pode ser usado', 400);
     }
     changes.driver_id = Number(payload.driverId);
+  }
+  // Troca do veículo (indicado errado na saída). Com a viagem em aberto, o
+  // índice idx_fleet_logs_vehicle_on_trip barra um veículo que já está fora.
+  if (has('vehicleId') && Number(payload.vehicleId) !== log.vehicle_id) {
+    const vehicle = await assertBelongsToCompany(
+      vehiclesRepository,
+      Number(payload.vehicleId),
+      companyId,
+      'vehicleId inválido: veículo não encontrado nesta empresa'
+    );
+    if (vehicle.vehicle_type !== VEHICLE_TYPE_FLEET) {
+      throw new AppError('O veículo precisa estar cadastrado como Frota Própria', 400);
+    }
+    if (log.transporting_vehicle_id && vehicle.id === log.transporting_vehicle_id) {
+      throw new AppError('O veículo transportado não pode ser o próprio guincho', 400);
+    }
+    changes.vehicle_id = vehicle.id;
   }
   if (has('destination')) changes.destination = parseOptionalText(payload.destination, 'Destino');
   if (has('purpose')) changes.purpose_encrypted = encryptField(parseOptionalText(payload.purpose, 'Motivo'));
@@ -538,7 +557,14 @@ async function updateLog(auth, id, payload) {
   }
 
   try {
-    const updated = await withAuthTransaction(auth, (trx) => repository.update(id, companyId, changes, trx));
+    const updated = await withAuthTransaction(auth, async (trx) => {
+      const row = await repository.update(id, companyId, changes, trx);
+      // Guincho trocado: os veículos levados em cima apontam pro novo.
+      if (changes.vehicle_id) {
+        await repository.updateCarriedTransportingVehicle(id, companyId, changes.vehicle_id, trx);
+      }
+      return row;
+    });
     return toDTO(updated);
   } catch (err) {
     throw mapDbError(err);

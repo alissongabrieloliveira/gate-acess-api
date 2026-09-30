@@ -172,6 +172,39 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       expect(res.status).toBe(200);
       expect(res.body.destinationSectorId).toBe(sector.id);
     });
+
+    test('troca a pessoa e o veículo por outros cadastros, sem mexer nos cadastros', async () => {
+      const log = await createAccess();
+      const right = await createPerson({ companyId: company.id, name: 'Pessoa Certa', personType: PERSON_TYPE_EMPLOYEE });
+      const rightVehicle = await createVehicle({ companyId: company.id });
+      const wrong = await db('people').where({ id: log.personId }).first();
+
+      const res = await put(log.id, { personId: right.id, vehicleId: rightVehicle.id });
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ personId: right.id, vehicleId: rightVehicle.id });
+      // O cadastro da pessoa indicada errado continua como estava.
+      expect((await db('people').where({ id: wrong.id }).first()).name_encrypted).toBe(wrong.name_encrypted);
+    });
+
+    test('tirar o veículo limpa o KM; veículo de frota -> 400; personId vazio -> 400', async () => {
+      const log = await createAccess();
+      const cleared = await put(log.id, { vehicleId: null });
+      expect(cleared.status).toBe(200);
+      expect(cleared.body).toMatchObject({ vehicleId: null, kmEntry: null, kmExit: null });
+
+      const fleet = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+      expect((await put(log.id, { vehicleId: fleet.id })).status).toBe(400);
+      expect((await put(log.id, { personId: null })).status).toBe(400);
+    });
+
+    test('pessoa de OUTRA empresa -> 400; operador -> 403', async () => {
+      const log = await createAccess();
+      const otherCompany = await createCompany();
+      const outsider = await createPerson({ companyId: otherCompany.id });
+      expect((await put(log.id, { personId: outsider.id })).status).toBe(400);
+      const someone = await createPerson({ companyId: company.id });
+      expect((await put(log.id, { personId: someone.id }, operatorToken)).status).toBe(403);
+    });
   });
 
   describe('Controle de Frota', () => {
@@ -196,6 +229,43 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
     test('operador (não admin) -> 403', async () => {
       const log = await createTrip();
       expect((await put(log.id, { kmDeparture: 5001 }, operatorToken)).status).toBe(403);
+    });
+
+    test('troca o motorista e o veículo por outros cadastros', async () => {
+      const log = await createTrip({ returned: false });
+      const rightDriver = await createPerson({ companyId: company.id, personType: PERSON_TYPE_EMPLOYEE });
+      const rightVehicle = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+      const res = await put(log.id, { driverId: rightDriver.id, vehicleId: rightVehicle.id });
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ driverId: rightDriver.id, vehicleId: rightVehicle.id });
+    });
+
+    test('troca de veículo: não-frota -> 400; veículo que já está fora -> 409', async () => {
+      const log = await createTrip({ returned: false });
+      const visitor = await createVehicle({ companyId: company.id });
+      expect((await put(log.id, { vehicleId: visitor.id })).status).toBe(400);
+
+      const busy = await createTrip({ returned: false });
+      const res = await put(log.id, { vehicleId: busy.vehicleId });
+      expect(res.status).toBe(409);
+    });
+
+    test('trocar o guincho atualiza o transportado', async () => {
+      const tow = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+      const carried = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+      const newTow = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+      const driver = await createPerson({ companyId: company.id, personType: PERSON_TYPE_EMPLOYEE });
+      const dep = await request(app)
+        .post('/api/v1/fleet-logs')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ vehicleId: tow.id, driverId: driver.id, carriedVehicleId: carried.id, departureGateId: gate.id, kmDeparture: 10 });
+      expect(dep.status).toBe(201);
+
+      expect((await put(dep.body.id, { vehicleId: newTow.id })).status).toBe(200);
+      const carriedLog = await db('fleet_logs').where({ transport_log_id: dep.body.id }).first();
+      expect(carriedLog.transporting_vehicle_id).toBe(newTow.id);
+      // O transportado não pode virar o próprio guincho.
+      expect((await put(carriedLog.id, { vehicleId: newTow.id })).status).toBe(400);
     });
 
     test('corrige KM, destino, motivo e datas', async () => {

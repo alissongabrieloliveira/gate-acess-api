@@ -120,7 +120,15 @@ async function update(id, companyId, data, trx = db) {
   return row;
 }
 
+function updateCarriedTransportingVehicle(transportLogId, companyId, vehicleId, trx = db) {
+  return trx('fleet_logs')
+    .where({ transport_log_id: transportLogId, company_id: companyId })
+    .whereNull('deleted_at')
+    .update({ transporting_vehicle_id: vehicleId });
+}
+
 module.exports = {
+  updateCarriedTransportingVehicle,
   listAllByDriver,
   findByIdAndCompany,
   listByCompany,

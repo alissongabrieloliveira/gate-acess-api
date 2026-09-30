@@ -378,10 +378,11 @@ async function registerExit(auth, id, payload) {
 }
 
 /**
- * Correção de um registro de acesso (só admin — ver routes): KM de entrada/
- * saída, flag "KM indisponível", setor de destino, anfitrião e datas de
- * entrada/saída. Atualização parcial: campo ausente (undefined) = mantém;
- * null = limpa (só setor e anfitrião aceitam). Aplica as MESMAS regras da
+ * Correção de um registro de acesso (só admin — ver routes): pessoa e
+ * veículo (troca por outro cadastro), KM de entrada/saída, flag "KM
+ * indisponível", setor de destino, anfitrião e datas de entrada/saída.
+ * Atualização parcial: campo ausente (undefined) = mantém; null = limpa (só
+ * veículo, setor e anfitrião aceitam). Aplica as MESMAS regras da
  * entrada/saída, pra edição não virar atalho que fura a validação. O
  * antes/depois fica na Auditoria (trigger de access_logs).
  */
@@ -402,6 +403,47 @@ async function updateLog(auth, id, payload) {
   }
 
   const changes = {};
+
+  // Troca da pessoa/veículo (indicados errado na entrada) por outro cadastro
+  // — corrigir nome/CPF/placa do cadastro em si é em Cadastros.
+  let person = null;
+  if (has('personId')) {
+    if (!payload.personId) {
+      throw new AppError('Informe a pessoa do registro', 400);
+    }
+    person = await assertBelongsToCompany(
+      peopleRepository,
+      Number(payload.personId),
+      companyId,
+      'personId inválido: pessoa não encontrada nesta empresa'
+    );
+    if (person.anonymized_at) {
+      throw new AppError('Pessoa anonimizada (LGPD) não pode ser usada', 400);
+    }
+    changes.person_id = person.id;
+  }
+
+  let vehicle;
+  if (has('vehicleId')) {
+    if (payload.vehicleId === null) {
+      vehicle = null;
+      changes.vehicle_id = null;
+    } else {
+      vehicle = await assertBelongsToCompany(
+        vehiclesRepository,
+        Number(payload.vehicleId),
+        companyId,
+        'vehicleId inválido: veículo não encontrado nesta empresa'
+      );
+      if (vehicle.vehicle_type === VEHICLE_TYPE_FLEET && vehicle.id !== log.vehicle_id) {
+        throw new AppError(
+          'Veículo da frota própria não passa pelo Controle de Acessos: registre pelo Controle de Frota',
+          400
+        );
+      }
+      changes.vehicle_id = vehicle.id;
+    }
+  }
 
   if (has('destinationSectorId')) {
     if (payload.destinationSectorId === null) {
@@ -443,10 +485,19 @@ async function updateLog(auth, id, payload) {
 
   // KM só é revalidado quando a edição mexe em KM: registros antigos (de
   // antes da obrigatoriedade) podem ter o setor corrigido sem exigir KM.
-  if (has('kmEntry') || has('kmExit') || has('isKmUnavailable')) {
+  // Sem veículo não há KM: tirar o veículo do registro limpa o KM junto.
+  if (has('vehicleId') && payload.vehicleId === null) {
+    changes.km_entry = null;
+    changes.km_exit = null;
+    changes.is_km_unavailable = false;
+  } else if (has('kmEntry') || has('kmExit') || has('isKmUnavailable')) {
     const unavailable = has('isKmUnavailable') ? Boolean(payload.isKmUnavailable) : Boolean(log.is_km_unavailable);
-    const person = await peopleRepository.findByIdAndCompany(log.person_id, companyId);
-    const vehicle = log.vehicle_id ? await vehiclesRepository.findByIdAndCompany(log.vehicle_id, companyId) : null;
+    // Obrigatoriedade pela pessoa/veículo que ficam no registro (os novos,
+    // se a mesma edição trocou).
+    if (!person) person = await peopleRepository.findByIdAndCompany(log.person_id, companyId);
+    if (vehicle === undefined) {
+      vehicle = log.vehicle_id ? await vehiclesRepository.findByIdAndCompany(log.vehicle_id, companyId) : null;
+    }
     // Diferente da entrada/saída, aqui o flag NÃO apaga os números: ele é do
     // registro inteiro, e a entrada pode ter KM mesmo com a saída sem.
     const required = isKmRequired(person, vehicle) && !unavailable;
