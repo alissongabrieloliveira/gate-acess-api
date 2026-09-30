@@ -21,11 +21,21 @@ async function namesByIds(repo, companyId, ids) {
 
 /**
  * Anexa aos DTOs os dados de exibição do veículo, motorista, guincho
- * cadastrado e portões, buscados em lote — ver access-logs.service#withRelated.
+ * (`transportingVehicle`, no registro do veículo levado em cima), veículos da
+ * frota levados em cima (`carriedLogs`, no registro do guincho) e portões,
+ * buscados em lote — ver access-logs.service#withRelated.
  */
 async function withRelated(companyId, dtos) {
+  const carriedRows = await repository.listCarriedByTransportLogIds(
+    companyId,
+    dtos.map((d) => d.id)
+  );
+  const carried = carriedRows.map(toDTO);
   const [vehicles, people, gates] = await Promise.all([
-    vehiclesService.summariesByIds(companyId, dtos.flatMap((d) => [d.vehicleId, d.transportingVehicleId])),
+    vehiclesService.summariesByIds(
+      companyId,
+      [...dtos, ...carried].flatMap((d) => [d.vehicleId, d.transportingVehicleId])
+    ),
     peopleService.summariesByIds(companyId, dtos.map((d) => d.driverId)),
     namesByIds(gatesRepository, companyId, dtos.flatMap((d) => [d.departureGateId, d.returnGateId])),
   ]);
@@ -34,15 +44,33 @@ async function withRelated(companyId, dtos) {
     vehicle: vehicles.get(d.vehicleId) ?? null,
     driver: d.driverId ? (people.get(d.driverId) ?? null) : null,
     transportingVehicle: d.transportingVehicleId ? (vehicles.get(d.transportingVehicleId) ?? null) : null,
+    carriedLogs: carried
+      .filter((c) => c.transportLogId === d.id)
+      .map((c) => ({
+        id: c.id,
+        status: c.status,
+        noReturnReason: c.noReturnReason,
+        vehicle: vehicles.get(c.vehicleId) ?? null,
+      })),
     departureGate: gates.get(d.departureGateId) ?? null,
     returnGate: d.returnGateId ? (gates.get(d.returnGateId) ?? null) : null,
   }));
 }
 
 const CHECK_VIOLATION = '23514';
-const STATUS = { ON_TRIP: 'ON_TRIP', RETURNED: 'RETURNED' };
+const UNIQUE_VIOLATION = '23505';
+const STATUS = { ON_TRIP: 'ON_TRIP', RETURNED: 'RETURNED', NO_RETURN: 'NO_RETURN' };
+// Motivo de "não retorna" — o mesmo valor vai pra vehicles.operation_status.
+const NO_RETURN_REASONS = ['SOLD', 'TRANSFERRED_BRANCH', 'TRANSFERRED_HQ'];
+const VEHICLE_TYPE_FLEET = 2;
+const VEHICLE_ACTIVE = 'ACTIVE';
 
 function mapDbError(err) {
+  // Corrida entre duas saídas do mesmo veículo: a checagem do service passou
+  // nas duas, o índice único parcial barra a segunda.
+  if (err.code === UNIQUE_VIOLATION && err.constraint === 'idx_fleet_logs_vehicle_on_trip') {
+    return new AppError('Este veículo já tem uma saída em aberto', 409);
+  }
   if (err.code === CHECK_VIOLATION) {
     return new AppError('Dados inconsistentes (verifique KM, combustível ou datas informadas)', 400);
   }
@@ -62,6 +90,9 @@ function toDTO(log) {
     driverId: log.driver_id,
     transportingVehicleId: log.transporting_vehicle_id,
     transportedByPlate: log.transported_by_plate,
+    transportLogId: log.transport_log_id,
+    carriedVehiclePlate: log.carried_vehicle_plate,
+    noReturnReason: log.no_return_reason,
     destination: log.destination,
     purpose: decryptField(log.purpose_encrypted),
     departureTime: log.departure_time,
@@ -138,13 +169,75 @@ async function getById(companyId, id) {
   return dto;
 }
 
+function parseNoReturnReason(value, label) {
+  if (value === undefined || value === null || value === '') return null;
+  if (!NO_RETURN_REASONS.includes(value)) {
+    throw new AppError(`${label}: motivo de não retorno inválido (use ${NO_RETURN_REASONS.join(', ')})`, 400);
+  }
+  return value;
+}
+
+function formatDepartureDate(value) {
+  return new Date(value).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+}
+
+/**
+ * Veículo que vai sair (rodando ou em cima do guincho): da frota própria,
+ * não bloqueado, não vendido/transferido e sem outra saída em aberto.
+ */
+async function assertFleetVehicleCanLeave(companyId, vehicleId, label) {
+  const vehicle = await assertBelongsToCompany(
+    vehiclesRepository,
+    vehicleId,
+    companyId,
+    `${label}: veículo não encontrado nesta empresa`
+  );
+  if (vehicle.vehicle_type !== VEHICLE_TYPE_FLEET) {
+    throw new AppError(`${label}: o veículo precisa estar cadastrado como Frota Própria`, 400);
+  }
+  if (vehicle.is_blocked) {
+    throw new AppError(
+      `${label} bloqueado: ${decryptField(vehicle.block_reason_encrypted) || 'sem motivo informado'}`,
+      403
+    );
+  }
+  if (vehicle.operation_status && vehicle.operation_status !== VEHICLE_ACTIVE) {
+    throw new AppError(
+      `${label}: marcado como vendido/transferido — um administrador pode reativá-lo em Cadastros > Veículos`,
+      409
+    );
+  }
+  const openTrip = await repository.findOnTripByVehicle(companyId, vehicleId);
+  if (openTrip) {
+    throw new AppError(
+      `${label}: já está fora (saída em ${formatDepartureDate(openTrip.departure_time)}). ` +
+        'Registre o retorno antes de uma nova saída.',
+      409
+    );
+  }
+  return vehicle;
+}
+
+/**
+ * Saída de um veículo da frota — sempre com motorista (quem vai dirigindo).
+ * Se ele é um guincho levando outro veículo:
+ * - `carriedVehicleId` (da frota): cria também o registro do veículo levado
+ *   em cima (sem motorista, ligado a este por transport_log_id), que fica na
+ *   rua até voltar — em outro momento, rodando;
+ * - `carriedVehiclePlate` (terceiro): só a placa, neste registro.
+ * `noReturnReason` / `carriedNoReturnReason`: vendido ou transferido — o
+ * registro já nasce finalizado (NO_RETURN) e o cadastro do veículo fica
+ * marcado, sem novas saídas até um admin reativar.
+ */
 async function registerDeparture(auth, payload) {
   const { companyId } = auth;
   const {
     vehicleId,
     driverId,
-    transportingVehicleId,
-    transportedByPlate,
+    carriedVehicleId,
+    carriedVehiclePlate,
+    carriedNoReturnReason,
+    noReturnReason,
     destination,
     purpose,
     departureGateId,
@@ -157,48 +250,44 @@ async function registerDeparture(auth, payload) {
   if (!vehicleId || !departureGateId) {
     throw new AppError('vehicleId e departureGateId são obrigatórios', 400);
   }
+  if (!driverId) {
+    throw new AppError('Informe o motorista do veículo', 400);
+  }
+  if (carriedVehicleId && carriedVehiclePlate) {
+    throw new AppError('Informe carriedVehicleId ou carriedVehiclePlate, não os dois', 400);
+  }
+  if (carriedVehicleId && Number(carriedVehicleId) === Number(vehicleId)) {
+    throw new AppError('O veículo transportado não pode ser o próprio guincho', 400);
+  }
+  const mainNoReturn = parseNoReturnReason(noReturnReason, 'Veículo');
+  const carriedNoReturn = parseNoReturnReason(carriedNoReturnReason, 'Veículo transportado');
+  if (carriedNoReturn && !carriedVehicleId) {
+    throw new AppError('carriedNoReturnReason só vale para veículo transportado da frota', 400);
+  }
+  const carriedPlate = carriedVehiclePlate ? normalizePlate(carriedVehiclePlate) : null;
+  if (carriedVehiclePlate && (!carriedPlate || carriedPlate.length > 10)) {
+    throw new AppError('Placa do veículo transportado inválida', 400);
+  }
 
   const kmUnavailable = Boolean(isKmUnavailable);
   const kmDepartureValue = parseRequiredKm(kmDeparture, kmUnavailable, 'KM de saída');
 
-  const vehicle = await assertBelongsToCompany(
-    vehiclesRepository,
-    Number(vehicleId),
+  await assertFleetVehicleCanLeave(companyId, Number(vehicleId), 'Veículo');
+  if (carriedVehicleId) {
+    await assertFleetVehicleCanLeave(companyId, Number(carriedVehicleId), 'Veículo transportado');
+  }
+
+  const driver = await assertBelongsToCompany(
+    peopleRepository,
+    Number(driverId),
     companyId,
-    'vehicleId inválido: veículo não encontrado nesta empresa'
+    'driverId inválido: pessoa não encontrada nesta empresa'
   );
-  if (vehicle.is_blocked) {
-    throw new AppError(`Veículo bloqueado: ${decryptField(vehicle.block_reason_encrypted) || 'sem motivo informado'}`, 403);
+  if (driver.is_blocked) {
+    throw new AppError(`Motorista bloqueado: ${decryptField(driver.block_reason_encrypted) || 'sem motivo informado'}`, 403);
   }
-
-  if (driverId !== undefined && driverId !== null) {
-    const driver = await assertBelongsToCompany(
-      peopleRepository,
-      Number(driverId),
-      companyId,
-      'driverId inválido: pessoa não encontrada nesta empresa'
-    );
-    if (driver.is_blocked) {
-      throw new AppError(`Motorista bloqueado: ${decryptField(driver.block_reason_encrypted) || 'sem motivo informado'}`, 403);
-    }
-    if (driver.anonymized_at) {
-      throw new AppError('Motorista anonimizado (LGPD) não pode ser usado em um registro novo', 400);
-    }
-  }
-
-  if (transportingVehicleId !== undefined && transportingVehicleId !== null) {
-    if (Number(transportingVehicleId) === Number(vehicleId)) {
-      throw new AppError('transportingVehicleId não pode ser o mesmo veículo transportado', 400);
-    }
-    if (transportedByPlate) {
-      throw new AppError('Informe transportingVehicleId ou transportedByPlate, não os dois', 400);
-    }
-    await assertBelongsToCompany(
-      vehiclesRepository,
-      Number(transportingVehicleId),
-      companyId,
-      'transportingVehicleId inválido: veículo não encontrado nesta empresa'
-    );
+  if (driver.anonymized_at) {
+    throw new AppError('Motorista anonimizado (LGPD) não pode ser usado em um registro novo', 400);
   }
 
   await assertBelongsToCompany(
@@ -208,27 +297,66 @@ async function registerDeparture(auth, payload) {
     'departureGateId inválido: portão não encontrado nesta empresa'
   );
 
+  const purposeText = purpose === undefined ? null : parseOptionalText(purpose, 'Motivo');
+  // O odômetro do veículo levado em cima não anda: a saída dele herda o
+  // último KM conhecido (a volta, rodando, é conferida contra esse valor).
+  const carriedLastKm = carriedVehicleId
+    ? await repository.findLastKnownKm(companyId, Number(carriedVehicleId))
+    : null;
+
   try {
-    const log = await withAuthTransaction(auth, (trx) =>
-      repository.insert(
+    const log = await withAuthTransaction(auth, async (trx) => {
+      const departureTime = new Date();
+      const main = await repository.insert(
         {
           company_id: companyId,
           vehicle_id: Number(vehicleId),
-          driver_id: driverId ? Number(driverId) : null,
-          transporting_vehicle_id: transportingVehicleId ? Number(transportingVehicleId) : null,
-          transported_by_plate: transportedByPlate ? normalizePlate(transportedByPlate) : null,
+          driver_id: Number(driverId),
+          carried_vehicle_plate: carriedPlate,
           destination: destination || null,
-          purpose_encrypted: encryptField(purpose === undefined ? null : parseOptionalText(purpose, 'Motivo')),
+          purpose_encrypted: encryptField(purposeText),
+          departure_time: departureTime,
           departure_gate_id: Number(departureGateId),
           departure_operator_id: auth.userId,
           km_departure: kmDepartureValue,
           is_km_unavailable: kmUnavailable,
           fuel_level_departure: fuelLevelDeparture !== undefined ? Number(fuelLevelDeparture) : null,
           observation_encrypted: encryptField(observation || null),
+          status: mainNoReturn ? STATUS.NO_RETURN : STATUS.ON_TRIP,
+          no_return_reason: mainNoReturn,
         },
         trx
-      )
-    );
+      );
+      if (mainNoReturn) {
+        await vehiclesRepository.update(Number(vehicleId), companyId, { operation_status: mainNoReturn }, trx);
+      }
+
+      if (carriedVehicleId) {
+        await repository.insert(
+          {
+            company_id: companyId,
+            vehicle_id: Number(carriedVehicleId),
+            driver_id: null,
+            transporting_vehicle_id: Number(vehicleId),
+            transport_log_id: main.id,
+            destination: destination || null,
+            purpose_encrypted: encryptField(purposeText),
+            departure_time: departureTime,
+            departure_gate_id: Number(departureGateId),
+            departure_operator_id: auth.userId,
+            km_departure: carriedLastKm ? Number(carriedLastKm.km) : null,
+            is_km_unavailable: false,
+            status: carriedNoReturn ? STATUS.NO_RETURN : STATUS.ON_TRIP,
+            no_return_reason: carriedNoReturn,
+          },
+          trx
+        );
+        if (carriedNoReturn) {
+          await vehiclesRepository.update(Number(carriedVehicleId), companyId, { operation_status: carriedNoReturn }, trx);
+        }
+      }
+      return main;
+    });
     return toDTO(log);
   } catch (err) {
     throw mapDbError(err);
@@ -343,6 +471,25 @@ async function updateLog(auth, id, payload) {
   }
 
   const changes = {};
+  if (has('driverId')) {
+    // O registro do veículo levado em cima do guincho não tem motorista.
+    if (log.transport_log_id) {
+      throw new AppError('Veículo transportado em cima do guincho não tem motorista', 400);
+    }
+    if (!payload.driverId) {
+      throw new AppError('Informe o motorista do veículo', 400);
+    }
+    const driver = await assertBelongsToCompany(
+      peopleRepository,
+      Number(payload.driverId),
+      companyId,
+      'driverId inválido: pessoa não encontrada nesta empresa'
+    );
+    if (driver.anonymized_at) {
+      throw new AppError('Motorista anonimizado (LGPD) não pode ser usado', 400);
+    }
+    changes.driver_id = Number(payload.driverId);
+  }
   if (has('destination')) changes.destination = parseOptionalText(payload.destination, 'Destino');
   if (has('purpose')) changes.purpose_encrypted = encryptField(parseOptionalText(payload.purpose, 'Motivo'));
 

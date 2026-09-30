@@ -177,10 +177,11 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
   describe('Controle de Frota', () => {
     async function createTrip({ returned = true } = {}) {
       const vehicle = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+      const driver = await createPerson({ companyId: company.id, personType: PERSON_TYPE_EMPLOYEE });
       const dep = await request(app)
         .post('/api/v1/fleet-logs')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ vehicleId: vehicle.id, departureGateId: gate.id, kmDeparture: 5000, destination: 'Goiânia' });
+        .send({ vehicleId: vehicle.id, driverId: driver.id, departureGateId: gate.id, kmDeparture: 5000, destination: 'Goiânia' });
       if (!returned) return dep.body;
       const ret = await request(app)
         .patch(`/api/v1/fleet-logs/${dep.body.id}/return`)

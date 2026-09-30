@@ -1,4 +1,5 @@
 const AppError = require('../../utils/AppError');
+const RULES = require('../../config/rules');
 const { encryptField, decryptField } = require('../../utils/crypto');
 const repository = require('./vehicles.repository');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
@@ -23,6 +24,9 @@ function mapUniqueViolation(err) {
 // pra esse campo, só o default 1).
 const VEHICLE_TYPES = { VISITOR: 1, OWN_FLEET: 2, EMPLOYEE: 3, CONTRACTOR: 4 };
 const VALID_VEHICLE_TYPES = Object.values(VEHICLE_TYPES);
+// operation_status: ACTIVE (padrão) ou o motivo de uma saída de frota "não
+// retorna" (fleet-logs.service NO_RETURN_REASONS).
+const OPERATION_STATUSES = ['ACTIVE', 'SOLD', 'TRANSFERRED_BRANCH', 'TRANSFERRED_HQ'];
 
 function assertValidVehicleType(vehicleType) {
   if (vehicleType !== undefined && !VALID_VEHICLE_TYPES.includes(vehicleType)) {
@@ -172,7 +176,17 @@ async function update(auth, id, payload) {
   if (payload.brand !== undefined) changes.brand = payload.brand || null;
   if (payload.model !== undefined) changes.model = payload.model || null;
   if (payload.color !== undefined) changes.color = payload.color || null;
-  if (payload.operationStatus !== undefined) changes.operation_status = payload.operationStatus;
+  if (payload.operationStatus !== undefined) {
+    // Vendido/transferido é marcado pela saída de frota "não retorna";
+    // mexer nisso à mão (ex.: reativar um veículo que voltou) é só admin.
+    if (!(auth.rules & RULES.ADMIN)) {
+      throw new AppError('Somente administradores podem alterar a situação do veículo', 403);
+    }
+    if (!OPERATION_STATUSES.includes(payload.operationStatus)) {
+      throw new AppError(`Situação inválida (use ${OPERATION_STATUSES.join(', ')})`, 400);
+    }
+    changes.operation_status = payload.operationStatus;
+  }
   if (payload.identificationCode !== undefined) {
     changes.identification_code = payload.identificationCode?.trim() || null;
   }

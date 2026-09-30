@@ -320,11 +320,15 @@ describe('Controle de Acessos (access-logs) — entrada, saída e regras de neg�
         const vehicle = await createVehicle({ companyId: company.id, vehicleType: 3 });
         await enter({ personId: person.id, vehicleId: vehicle.id, kmEntry: 100 });
 
-        const trip = await request(app)
-          .post('/api/v1/fleet-logs')
-          .set('Authorization', `Bearer ${token}`)
-          .send({ vehicleId: vehicle.id, departureGateId: gate.id, kmDeparture: 500 });
-        expect(trip.status).toBe(201);
+        // Direto no banco: pela API a saída de frota só aceita veículo de
+        // Frota Própria, que por sua vez não entra no Controle de Acessos.
+        await db('fleet_logs').insert({
+          company_id: company.id,
+          vehicle_id: vehicle.id,
+          departure_gate_id: gate.id,
+          departure_operator_id: admin.id,
+          km_departure: 500,
+        });
         expect((await lastKm(vehicle.id)).body.lastKm).toBe(100);
       });
 

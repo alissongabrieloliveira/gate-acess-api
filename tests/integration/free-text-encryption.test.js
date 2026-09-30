@@ -92,8 +92,10 @@ describe('Campos de texto livre criptografados', () => {
 
   test('motivo e observações da frota', async () => {
     const vehicle = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+    const driver = await createPerson({ companyId: company.id, personType: 3 });
     const created = await auth(request(app).post('/api/v1/fleet-logs')).send({
       vehicleId: vehicle.id,
+      driverId: driver.id,
       departureGateId: gate.id,
       kmDeparture: 1000,
       purpose: 'Levar funcionário ao hospital',
@@ -111,6 +113,7 @@ describe('Campos de texto livre criptografados', () => {
 
     const tooLong = await auth(request(app).post('/api/v1/fleet-logs')).send({
       vehicleId: (await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET })).id,
+      driverId: driver.id,
       departureGateId: gate.id,
       kmDeparture: 1000,
       purpose: 'x'.repeat(256),

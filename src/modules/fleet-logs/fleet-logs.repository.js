@@ -7,6 +7,9 @@ const COLUMNS = [
   'driver_id',
   'transporting_vehicle_id',
   'transported_by_plate',
+  'transport_log_id',
+  'carried_vehicle_plate',
+  'no_return_reason',
   'destination',
   'purpose_encrypted',
   'departure_time',
@@ -76,6 +79,17 @@ function listOnTripByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ON_TRIP' }).orderBy('departure_time', 'asc');
 }
 
+// Saída em aberto do veículo (no máximo uma — idx_fleet_logs_vehicle_on_trip).
+function findOnTripByVehicle(companyId, vehicleId) {
+  return baseQuery(companyId).where({ vehicle_id: vehicleId, status: 'ON_TRIP' }).first();
+}
+
+// Registros dos veículos da frota levados em cima de cada guincho.
+function listCarriedByTransportLogIds(companyId, transportLogIds) {
+  if (!transportLogIds.length) return [];
+  return baseQuery(companyId).whereIn('transport_log_id', transportLogIds).orderBy('id', 'asc');
+}
+
 // Log mais recente do veículo que tenha algum KM registrado; COALESCE porque
 // o retorno (quando existe) é sempre a leitura mais nova do odômetro.
 function findLastKnownKm(companyId, vehicleId) {
@@ -112,6 +126,8 @@ module.exports = {
   listByCompany,
   countByCompany,
   listOnTripByCompany,
+  findOnTripByVehicle,
+  listCarriedByTransportLogIds,
   findLastKnownKm,
   insert,
   update,

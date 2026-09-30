@@ -81,34 +81,39 @@ describe('Registros de acesso/frota trazem os dados relacionados (sem amostra de
     expect(detail.body.person).toMatchObject({ id: person.id, name: 'Pessoa Removida' });
   });
 
-  test('registro de frota vem com veículo, motorista, guincho e portões', async () => {
-    const vehicle = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET, licensePlate: 'FRT2B34' });
+  test('registro de frota vem com veículo, motorista, guincho, transportado e portões', async () => {
     const tow = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET, licensePlate: 'GCH3C45' });
+    const carried = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET, licensePlate: 'FRT2B34' });
     const driver = await createPerson({ companyId: company.id, name: 'Motorista Teste', personType: PERSON_TYPE_EMPLOYEE });
 
     const created = await auth(request(app).post('/api/v1/fleet-logs')).send({
-      vehicleId: vehicle.id,
+      vehicleId: tow.id,
       driverId: driver.id,
-      transportingVehicleId: tow.id,
+      carriedVehicleId: carried.id,
       departureGateId: gate.id,
       kmDeparture: 5000,
     });
     expect(created.status).toBe(201);
 
-    const list = await auth(request(app).get('/api/v1/fleet-logs')).query({ limit: 1 });
-    expect(list.body.data[0]).toMatchObject({
-      id: created.body.id,
-      vehicle: { id: vehicle.id, licensePlate: 'FRT2B34', vehicleType: VEHICLE_TYPE_FLEET },
+    const list = await auth(request(app).get('/api/v1/fleet-logs')).query({ limit: 100 });
+    expect(list.body.data.find((l) => l.id === created.body.id)).toMatchObject({
+      vehicle: { id: tow.id, licensePlate: 'GCH3C45', vehicleType: VEHICLE_TYPE_FLEET },
       driver: { id: driver.id, name: 'Motorista Teste' },
-      transportingVehicle: { id: tow.id, licensePlate: 'GCH3C45' },
+      transportingVehicle: null,
+      carriedLogs: [{ status: 'ON_TRIP', vehicle: { id: carried.id, licensePlate: 'FRT2B34' } }],
       departureGate: { id: gate.id, name: 'Portaria Norte' },
       returnGate: null,
+    });
+    expect(list.body.data.find((l) => l.transportLogId === created.body.id)).toMatchObject({
+      vehicle: { id: carried.id },
+      driver: null,
+      transportingVehicle: { id: tow.id, licensePlate: 'GCH3C45' },
     });
 
     const onTrip = await auth(request(app).get('/api/v1/fleet-logs/on-trip'));
     expect(onTrip.body.data.find((l) => l.id === created.body.id).driver.name).toBe('Motorista Teste');
 
     const detail = await auth(request(app).get(`/api/v1/fleet-logs/${created.body.id}`));
-    expect(detail.body.vehicle.licensePlate).toBe('FRT2B34');
+    expect(detail.body.vehicle.licensePlate).toBe('GCH3C45');
   });
 });
