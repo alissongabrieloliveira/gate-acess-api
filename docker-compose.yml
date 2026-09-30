@@ -10,8 +10,11 @@ services:
       POSTGRES_USER: portaria_admin
       POSTGRES_PASSWORD: portaria_dev_pw
       POSTGRES_DB: portaria
+    # Só localhost: sem o 127.0.0.1 o Docker publica em 0.0.0.0 (toda a
+    # rede), e a senha acima é pública no repositório. O backend do Compose
+    # não usa esta porta (fala com `db:5432` pela rede interna).
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - portaria_pgdata:/var/lib/postgresql/data
 
