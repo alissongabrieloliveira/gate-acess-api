@@ -90,7 +90,6 @@ function toDTO(log) {
     vehicleId: log.vehicle_id,
     driverId: log.driver_id,
     transportingVehicleId: log.transporting_vehicle_id,
-    transportedByPlate: log.transported_by_plate,
     transportLogId: log.transport_log_id,
     carriedVehiclePlate: log.carried_vehicle_plate,
     noReturnReason: log.no_return_reason,

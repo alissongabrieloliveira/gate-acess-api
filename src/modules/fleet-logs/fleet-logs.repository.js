@@ -6,7 +6,6 @@ const COLUMNS = [
   'vehicle_id',
   'driver_id',
   'transporting_vehicle_id',
-  'transported_by_plate',
   'transport_log_id',
   'carried_vehicle_plate',
   'no_return_reason',
