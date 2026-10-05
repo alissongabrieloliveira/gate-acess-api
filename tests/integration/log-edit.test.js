@@ -199,6 +199,22 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       expect((await put(log.id, { personId: null })).status).toBe(400);
     });
 
+    test('registro em aberto: pessoa/veículo que já estão dentro em outro registro -> 409', async () => {
+      const log = await createAccess({ finished: false });
+      const other = await createAccess({ finished: false });
+
+      const byPerson = await put(log.id, { personId: other.personId });
+      expect(byPerson.status).toBe(409);
+      expect(byPerson.body.error).toMatch(/já está dentro/);
+      expect((await put(log.id, { vehicleId: other.vehicleId })).status).toBe(409);
+      // Reenviar a própria pessoa/veículo não conflita consigo mesmo.
+      expect((await put(log.id, { personId: log.personId, vehicleId: log.vehicleId })).status).toBe(200);
+
+      // Registro finalizado (histórico) pode apontar pra quem está dentro agora.
+      const finished = await createAccess();
+      expect((await put(finished.id, { vehicleId: other.vehicleId })).status).toBe(200);
+    });
+
     test('pessoa de OUTRA empresa -> 400; operador -> 403', async () => {
       const log = await createAccess();
       const otherCompany = await createCompany();

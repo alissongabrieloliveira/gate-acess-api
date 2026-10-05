@@ -77,6 +77,23 @@ function listActiveByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ACTIVE' }).orderBy('entry_time', 'asc');
 }
 
+// Entrada em aberto da pessoa / do veículo (no máximo uma de cada —
+// idx_access_logs_person_active / idx_access_logs_vehicle_active).
+// excludeId: o próprio registro, na edição.
+function findActiveByColumn(companyId, column, value, excludeId) {
+  const query = baseQuery(companyId).where({ [column]: value, status: 'ACTIVE' });
+  if (excludeId !== undefined) query.whereNot({ id: excludeId });
+  return query.first();
+}
+
+function findActiveByPerson(companyId, personId, excludeId) {
+  return findActiveByColumn(companyId, 'person_id', personId, excludeId);
+}
+
+function findActiveByVehicle(companyId, vehicleId, excludeId) {
+  return findActiveByColumn(companyId, 'vehicle_id', vehicleId, excludeId);
+}
+
 // Acesso mais recente do veículo com algum KM registrado; COALESCE porque a
 // saída (quando existe) é sempre a leitura mais nova do odômetro.
 function findLastKnownKm(companyId, vehicleId) {
@@ -113,6 +130,8 @@ module.exports = {
   listByCompany,
   countByCompany,
   listActiveByCompany,
+  findActiveByPerson,
+  findActiveByVehicle,
   findLastKnownKm,
   insert,
   update,

@@ -33,6 +33,14 @@ function isKmRequired(person, vehicle) {
 }
 
 function mapDbError(err) {
+  // Corrida entre dois cadastros simultâneos que passaram pela checagem do
+  // service (assertNotInside) ao mesmo tempo.
+  if (err.code === UNIQUE_VIOLATION && err.constraint === 'idx_access_logs_person_active') {
+    return new AppError('Esta pessoa já tem uma entrada em aberto: registre a saída antes de uma nova entrada', 409);
+  }
+  if (err.code === UNIQUE_VIOLATION && err.constraint === 'idx_access_logs_vehicle_active') {
+    return new AppError('Este veículo já tem uma entrada em aberto: registre a saída antes de uma nova entrada', 409);
+  }
   if (err.code === UNIQUE_VIOLATION) {
     return new AppError('Já existe um registro com esse código de recibo nesta empresa', 409);
   }
@@ -40,6 +48,43 @@ function mapDbError(err) {
     return new AppError('Dados inconsistentes (verifique KM ou datas informadas)', 400);
   }
   return err;
+}
+
+function formatEntryDate(value) {
+  return new Date(value).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+}
+
+/**
+ * No máximo UMA entrada em aberto por pessoa e por veículo (mesma regra dos
+ * índices idx_access_logs_person_active / idx_access_logs_vehicle_active —
+ * aqui só pra devolver uma mensagem que diga onde está o registro aberto).
+ * Só olha access_logs: o funcionário que entrou com o carro próprio pode sair
+ * num veículo da frota (fleet-logs) com o acesso ainda em aberto.
+ * excludeId: o próprio registro, na edição.
+ */
+async function assertNotInside(companyId, { person, vehicle }, excludeId) {
+  if (person) {
+    const open = await repository.findActiveByPerson(companyId, person.id, excludeId);
+    if (open) {
+      throw new AppError(
+        `${decryptField(person.name_encrypted) || 'Esta pessoa'} já está dentro ` +
+          `(entrada em ${formatEntryDate(open.entry_time)}). Registre a saída antes de uma nova entrada.`,
+        409
+      );
+    }
+  }
+  if (vehicle) {
+    const open = await repository.findActiveByVehicle(companyId, vehicle.id, excludeId);
+    if (open) {
+      const driver = await peopleRepository.findByIdAndCompany(open.person_id, companyId);
+      const driverName = driver ? decryptField(driver.name_encrypted) : null;
+      throw new AppError(
+        `Veículo ${vehicle.license_plate} já está dentro (entrada em ${formatEntryDate(open.entry_time)}` +
+          `${driverName ? `, com ${driverName}` : ''}). Registre a saída antes de uma nova entrada.`,
+        409
+      );
+    }
+  }
 }
 
 function toDTO(log) {
@@ -281,6 +326,8 @@ async function registerEntry(auth, payload) {
     'entryGateId inválido: portão não encontrado nesta empresa'
   );
 
+  await assertNotInside(companyId, { person, vehicle });
+
   const kmUnavailable = Boolean(isKmUnavailable);
   const kmEntryValue = resolveKm(kmEntry, {
     unavailable: kmUnavailable,
@@ -443,6 +490,19 @@ async function updateLog(auth, id, payload) {
       }
       changes.vehicle_id = vehicle.id;
     }
+  }
+
+  // Registro ainda em aberto: a pessoa/veículo novos não podem estar dentro
+  // em outro registro. Finalizado não conflita com quem está dentro agora.
+  if (!isFinished && (changes.person_id || changes.vehicle_id)) {
+    await assertNotInside(
+      companyId,
+      {
+        person: changes.person_id && changes.person_id !== log.person_id ? person : null,
+        vehicle: changes.vehicle_id && changes.vehicle_id !== log.vehicle_id ? vehicle : null,
+      },
+      log.id
+    );
   }
 
   if (has('destinationSectorId')) {

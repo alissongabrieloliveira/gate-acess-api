@@ -10,6 +10,7 @@ const {
   createVehicle,
   createGate,
   createSector,
+  testCityId,
 } = require('../helpers/factories');
 
 describe('Controle de Acessos (access-logs) — entrada, saída e regras de negócio', () => {
@@ -148,6 +149,73 @@ describe('Controle de Acessos (access-logs) — entrada, saída e regras de neg�
     expect(res.status).toBe(200);
     expect(res.body.data.map((l) => l.id)).toContain(created.body.id);
     expect(res.body.data.every((l) => l.status === 'ACTIVE')).toBe(true);
+  });
+
+  describe('uma entrada em aberto por pessoa e por veículo', () => {
+    const enter = (body) =>
+      request(app).post('/api/v1/access-logs').set('Authorization', `Bearer ${token}`).send({ entryGateId: gate.id, ...body });
+    const exit = (id) =>
+      request(app).patch(`/api/v1/access-logs/${id}/exit`).set('Authorization', `Bearer ${token}`).send({ exitGateId: gate.id });
+
+    test('pessoa que já está dentro -> 409; depois da saída entra de novo', async () => {
+      const person = await createPerson({ companyId: company.id, name: 'Joana Dentro' });
+      const first = await enter({ personId: person.id });
+      expect(first.status).toBe(201);
+
+      const again = await enter({ personId: person.id });
+      expect(again.status).toBe(409);
+      expect(again.body.error).toMatch(/Joana Dentro já está dentro/);
+
+      expect((await exit(first.body.id)).status).toBe(200);
+      expect((await enter({ personId: person.id })).status).toBe(201);
+    });
+
+    test('placa que já está dentro com OUTRA pessoa -> 409 com placa e quem está com ela', async () => {
+      const driver = await createPerson({ companyId: company.id, name: 'Carlos Motorista' });
+      const other = await createPerson({ companyId: company.id });
+      const vehicle = await createVehicle({ companyId: company.id });
+      const first = await enter({ personId: driver.id, vehicleId: vehicle.id });
+      expect(first.status).toBe(201);
+
+      const again = await enter({ personId: other.id, vehicleId: vehicle.id });
+      expect(again.status).toBe(409);
+      expect(again.body.error).toMatch(new RegExp(`${vehicle.license_plate} já está dentro`));
+      expect(again.body.error).toMatch(/Carlos Motorista/);
+      // Nada foi gravado pra outra pessoa.
+      expect(await db('access_logs').where({ person_id: other.id })).toHaveLength(0);
+
+      // Sem veículo, a outra pessoa entra normalmente.
+      expect((await enter({ personId: other.id })).status).toBe(201);
+    });
+
+    test('índice do banco barra a entrada duplicada mesmo sem passar pelo service', async () => {
+      const person = await createPerson({ companyId: company.id });
+      const first = await enter({ personId: person.id });
+      const row = await db('access_logs').where({ id: first.body.id }).first();
+      const { id, created_at, updated_at, ...copy } = row;
+      await expect(db('access_logs').insert(copy)).rejects.toMatchObject({
+        constraint: 'idx_access_logs_person_active',
+      });
+    });
+
+    test('funcionário com acesso em aberto (carro próprio) pode sair num veículo da frota', async () => {
+      const employee = await createPerson({ companyId: company.id, personType: 3 });
+      const ownCar = await createVehicle({ companyId: company.id });
+      expect((await enter({ personId: employee.id, vehicleId: ownCar.id, kmEntry: 100 })).status).toBe(201);
+
+      const fleetVehicle = await createVehicle({ companyId: company.id, vehicleType: 2 });
+      const departure = await request(app)
+        .post('/api/v1/fleet-logs')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          vehicleId: fleetVehicle.id,
+          driverId: employee.id,
+          departureGateId: gate.id,
+          kmDeparture: 5000,
+          destinationCityId: await testCityId(),
+        });
+      expect(departure.status).toBe(201);
+    });
   });
 
   describe('PATCH /:id/exit', () => {

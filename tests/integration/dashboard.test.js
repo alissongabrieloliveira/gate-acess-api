@@ -52,12 +52,14 @@ describe('GET /dashboard/summary', () => {
     const twoDaysAgo = new Date(Date.now() - 2 * DAY_MS);
     lateEntry = new Date(Date.UTC(twoDaysAgo.getUTCFullYear(), twoDaysAgo.getUTCMonth(), twoDaysAgo.getUTCDate(), 1, 30));
     const base = { company_id: company.id, person_id: person.id, entry_operator_id: admin.id };
+    // A mesma pessoa só pode ter UMA entrada em aberto: as anteriores já têm saída.
+    const finished = (entryTime) => ({ status: 'FINISHED', entry_time: entryTime, exit_time: entryTime });
     await db('access_logs').insert([
-      { ...base, entry_gate_id: gateA.id, entry_time: lateEntry },
-      { ...base, entry_gate_id: gateA.id, entry_time: new Date() },
+      { ...base, entry_gate_id: gateA.id, ...finished(lateEntry) },
+      { ...base, entry_gate_id: gateA.id, ...finished(new Date()) },
       { ...base, entry_gate_id: gateB.id, entry_time: new Date() },
       // Fora do período e soft-deletado: não contam.
-      { ...base, entry_gate_id: gateA.id, entry_time: new Date(Date.now() - 20 * DAY_MS) },
+      { ...base, entry_gate_id: gateA.id, ...finished(new Date(Date.now() - 20 * DAY_MS)) },
       { ...base, entry_gate_id: gateA.id, entry_time: new Date(), deleted_at: new Date() },
     ]);
   });
