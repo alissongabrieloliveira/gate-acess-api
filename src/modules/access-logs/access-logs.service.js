@@ -4,6 +4,7 @@ const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { resolveKm } = require('../../utils/km');
 const parseEditTimestamp = require('../../utils/parseEditTimestamp');
+const { parseRetroactiveTime, parseRetroactiveReason, formatDateTime } = require('../../utils/retroactive');
 const { attachSignedPhotoUrls, deletePhoto: deleteStoragePhoto } = require('../../utils/supabaseStorage');
 const repository = require('./access-logs.repository');
 const peopleRepository = require('../people/people.repository');
@@ -34,7 +35,7 @@ function isKmRequired(person, vehicle) {
 
 function mapDbError(err) {
   // Corrida entre dois cadastros simultâneos que passaram pela checagem do
-  // service (assertNotInside) ao mesmo tempo.
+  // service (assertNoOverlap) ao mesmo tempo.
   if (err.code === UNIQUE_VIOLATION && err.constraint === 'idx_access_logs_person_active') {
     return new AppError('Esta pessoa já tem uma entrada em aberto: registre a saída antes de uma nova entrada', 409);
   }
@@ -50,37 +51,51 @@ function mapDbError(err) {
   return err;
 }
 
-function formatEntryDate(value) {
-  return new Date(value).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+function describePeriod(log) {
+  const entry = `entrada em ${formatDateTime(log.entry_time)}`;
+  return log.exit_time ? `${entry}, saída em ${formatDateTime(log.exit_time)}` : `${entry}, ainda dentro`;
 }
 
 /**
- * No máximo UMA entrada em aberto por pessoa e por veículo (mesma regra dos
- * índices idx_access_logs_person_active / idx_access_logs_vehicle_active —
- * aqui só pra devolver uma mensagem que diga onde está o registro aberto).
+ * A mesma pessoa/veículo não pode ter dois registros cujo período se cruza —
+ * em particular, no máximo UMA entrada em aberto (mesma regra dos índices
+ * idx_access_logs_person_active / idx_access_logs_vehicle_active, que aqui
+ * ganha uma mensagem dizendo onde está o registro que conflita). Vale para
+ * lançamento normal, retroativo (`to` = saída informada junto, ou null =
+ * ainda dentro) e para a edição (`excludeId` = o próprio registro).
  * Só olha access_logs: o funcionário que entrou com o carro próprio pode sair
  * num veículo da frota (fleet-logs) com o acesso ainda em aberto.
- * excludeId: o próprio registro, na edição.
  */
-async function assertNotInside(companyId, { person, vehicle }, excludeId) {
-  if (person) {
-    const open = await repository.findActiveByPerson(companyId, person.id, excludeId);
-    if (open) {
-      throw new AppError(
-        `${decryptField(person.name_encrypted) || 'Esta pessoa'} já está dentro ` +
-          `(entrada em ${formatEntryDate(open.entry_time)}). Registre a saída antes de uma nova entrada.`,
-        409
+async function assertNoOverlap(companyId, { person, vehicle }, { from, to = null, excludeId }) {
+  const period = { from, to, excludeId };
+  // "Já está dentro" é o caso do dia a dia (entrada nova com a anterior em
+  // aberto); o resto é sobreposição de lançamento retroativo/edição.
+  const message = (subject, conflict, extra = '') => {
+    if (!conflict.exit_time && new Date(conflict.entry_time) <= from) {
+      return (
+        `${subject} já está dentro (entrada em ${formatDateTime(conflict.entry_time)}${extra}). ` +
+        'Registre a saída antes de uma nova entrada.'
       );
+    }
+    return (
+      `${subject} já tem registro nesse período (${describePeriod(conflict)}${extra}).` +
+      (to || excludeId !== undefined ? '' : ' Se já saiu, informe também a saída.')
+    );
+  };
+
+  if (person) {
+    const conflict = await repository.findOverlapping(companyId, 'person_id', person.id, period);
+    if (conflict) {
+      throw new AppError(message(decryptField(person.name_encrypted) || 'Esta pessoa', conflict), 409);
     }
   }
   if (vehicle) {
-    const open = await repository.findActiveByVehicle(companyId, vehicle.id, excludeId);
-    if (open) {
-      const driver = await peopleRepository.findByIdAndCompany(open.person_id, companyId);
+    const conflict = await repository.findOverlapping(companyId, 'vehicle_id', vehicle.id, period);
+    if (conflict) {
+      const driver = await peopleRepository.findByIdAndCompany(conflict.person_id, companyId);
       const driverName = driver ? decryptField(driver.name_encrypted) : null;
       throw new AppError(
-        `Veículo ${vehicle.license_plate} já está dentro (entrada em ${formatEntryDate(open.entry_time)}` +
-          `${driverName ? `, com ${driverName}` : ''}). Registre a saída antes de uma nova entrada.`,
+        message(`Veículo ${vehicle.license_plate}`, conflict, driverName ? `, com ${driverName}` : ''),
         409
       );
     }
@@ -113,6 +128,12 @@ function toDTO(log) {
     photoUrl: log.photo_url,
     status: log.status,
     observation: decryptField(log.observation_encrypted),
+    // Lançamento retroativo: justificativa preenchida = passagem lançada
+    // depois (selo nas telas). A entrada foi lançada de fato em createdAt.
+    entryRetroactiveReason: decryptField(log.entry_retroactive_reason_encrypted),
+    exitRetroactiveReason: decryptField(log.exit_retroactive_reason_encrypted),
+    exitRecordedAt: log.exit_recorded_at,
+    isRetroactive: Boolean(log.entry_retroactive_reason_encrypted || log.exit_retroactive_reason_encrypted),
     createdAt: log.created_at,
     updatedAt: log.updated_at,
   };
@@ -257,10 +278,28 @@ async function registerEntry(auth, payload) {
     receiptCode,
     signedReceiptUrl,
     observation,
+    exitGateId,
+    kmExit,
   } = payload;
 
   if (!personId || !entryGateId) {
     throw new AppError('personId e entryGateId são obrigatórios', 400);
+  }
+
+  // Lançamento retroativo (esqueceu de registrar na hora): entrada no passado
+  // e, se a pessoa já saiu, a saída junto — senão fica dentro e sai pelo
+  // fluxo normal. Sem entryTime é a entrada de agora, como sempre.
+  const entryTime = parseRetroactiveTime(auth, payload.entryTime, 'Data de entrada');
+  const exitTime = parseRetroactiveTime(auth, payload.exitTime, 'Data de saída');
+  if (exitTime && !entryTime) {
+    throw new AppError('Saída junto com a entrada só vale para lançamento retroativo (informe a data de entrada)', 400);
+  }
+  if (exitTime && exitTime < entryTime) {
+    throw new AppError('Data de saída não pode ser anterior à data de entrada', 400);
+  }
+  const retroactiveReason = entryTime ? parseRetroactiveReason(payload.retroactiveReason) : null;
+  if (exitTime && !exitGateId) {
+    throw new AppError('Informe o posto de saída', 400);
   }
 
   const person = await assertBelongsToCompany(
@@ -326,7 +365,17 @@ async function registerEntry(auth, payload) {
     'entryGateId inválido: portão não encontrado nesta empresa'
   );
 
-  await assertNotInside(companyId, { person, vehicle });
+  if (exitTime) {
+    await assertBelongsToCompany(
+      gatesRepository,
+      Number(exitGateId),
+      companyId,
+      'exitGateId inválido: portão não encontrado nesta empresa'
+    );
+  }
+
+  const now = new Date();
+  await assertNoOverlap(companyId, { person, vehicle }, { from: entryTime ?? now, to: exitTime });
 
   const kmUnavailable = Boolean(isKmUnavailable);
   const kmEntryValue = resolveKm(kmEntry, {
@@ -334,6 +383,17 @@ async function registerEntry(auth, payload) {
     required: isKmRequired(person, vehicle),
     label: 'KM de entrada',
   });
+  const kmExitValue = exitTime
+    ? resolveKm(kmExit, { unavailable: kmUnavailable, required: isKmRequired(person, vehicle), label: 'KM de saída' })
+    : null;
+  if (kmExitValue !== null && kmEntryValue !== null && kmExitValue < kmEntryValue) {
+    throw new AppError(
+      `KM de saída não pode ser menor que o KM de entrada (${kmEntryValue}). ` +
+        'Se o painel do veículo não está legível, marque "KM indisponível".',
+      400
+    );
+  }
+  const retroactiveReasonEncrypted = encryptField(retroactiveReason);
 
   try {
     const log = await withAuthTransaction(auth, (trx) =>
@@ -352,6 +412,17 @@ async function registerEntry(auth, payload) {
           receipt_code: receiptCode || null,
           signed_receipt_url: signedReceiptUrl || null,
           observation_encrypted: encryptField(observation || null),
+          // Sem entryTime, entry_time fica com o DEFAULT do banco (agora).
+          ...(entryTime && { entry_time: entryTime, entry_retroactive_reason_encrypted: retroactiveReasonEncrypted }),
+          ...(exitTime && {
+            exit_time: exitTime,
+            exit_gate_id: Number(exitGateId),
+            exit_operator_id: auth.userId,
+            km_exit: kmExitValue,
+            status: STATUS.FINISHED,
+            exit_retroactive_reason_encrypted: retroactiveReasonEncrypted,
+            exit_recorded_at: now,
+          }),
         },
         trx
       )
@@ -375,6 +446,15 @@ async function registerExit(auth, id, payload) {
   const { exitGateId, kmExit, isKmUnavailable, observation } = payload;
   if (!exitGateId) {
     throw new AppError('exitGateId é obrigatório', 400);
+  }
+  // Saída retroativa: a pessoa saiu antes e o operador esqueceu de registrar.
+  const exitTime = parseRetroactiveTime(auth, payload.exitTime, 'Data de saída');
+  const retroactiveReason = exitTime ? parseRetroactiveReason(payload.retroactiveReason) : null;
+  if (exitTime && exitTime < new Date(log.entry_time)) {
+    throw new AppError(
+      `Data de saída não pode ser anterior à data de entrada (${formatDateTime(log.entry_time)})`,
+      400
+    );
   }
 
   await assertBelongsToCompany(
@@ -405,11 +485,15 @@ async function registerExit(auth, id, payload) {
   }
 
   const changes = {
-    exit_time: new Date(),
+    exit_time: exitTime ?? new Date(),
     exit_gate_id: Number(exitGateId),
     exit_operator_id: auth.userId,
     status: STATUS.FINISHED,
   };
+  if (exitTime) {
+    changes.exit_retroactive_reason_encrypted = encryptField(retroactiveReason);
+    changes.exit_recorded_at = new Date();
+  }
   if (kmExitValue !== null) changes.km_exit = kmExitValue;
   // Só liga o flag: se a entrada já foi marcada como indisponível, uma saída
   // com KM válido não pode desligar isso.
@@ -492,19 +576,6 @@ async function updateLog(auth, id, payload) {
     }
   }
 
-  // Registro ainda em aberto: a pessoa/veículo novos não podem estar dentro
-  // em outro registro. Finalizado não conflita com quem está dentro agora.
-  if (!isFinished && (changes.person_id || changes.vehicle_id)) {
-    await assertNotInside(
-      companyId,
-      {
-        person: changes.person_id && changes.person_id !== log.person_id ? person : null,
-        vehicle: changes.vehicle_id && changes.vehicle_id !== log.vehicle_id ? vehicle : null,
-      },
-      log.id
-    );
-  }
-
   if (has('destinationSectorId')) {
     if (payload.destinationSectorId === null) {
       changes.destination_sector_id = null;
@@ -541,6 +612,34 @@ async function updateLog(auth, id, payload) {
     }
     if (has('entryTime')) changes.entry_time = entryTime;
     if (has('exitTime')) changes.exit_time = exitTime;
+  }
+
+  // Pessoa, veículo ou datas mudaram: o período final não pode cruzar outro
+  // registro da mesma pessoa/veículo (registro em aberto vai até agora em diante).
+  const personChanged = changes.person_id !== undefined && changes.person_id !== log.person_id;
+  const vehicleChanged = changes.vehicle_id !== undefined && changes.vehicle_id !== log.vehicle_id;
+  const timesChanged = changes.entry_time !== undefined || changes.exit_time !== undefined;
+  if (personChanged || vehicleChanged || timesChanged) {
+    const checkPerson = personChanged || timesChanged;
+    const checkVehicle = (vehicleChanged || timesChanged) && changes.vehicle_id !== null;
+    const finalVehicleId = changes.vehicle_id !== undefined ? changes.vehicle_id : log.vehicle_id;
+    await assertNoOverlap(
+      companyId,
+      {
+        person: checkPerson
+          ? (person ?? (await peopleRepository.findByIdAndCompany(log.person_id, companyId)))
+          : null,
+        vehicle:
+          checkVehicle && finalVehicleId
+            ? (vehicle ?? (await vehiclesRepository.findByIdAndCompany(finalVehicleId, companyId)))
+            : null,
+      },
+      {
+        from: new Date(changes.entry_time ?? log.entry_time),
+        to: (changes.exit_time ?? log.exit_time) ? new Date(changes.exit_time ?? log.exit_time) : null,
+        excludeId: log.id,
+      }
+    );
   }
 
   // KM só é revalidado quando a edição mexe em KM: registros antigos (de

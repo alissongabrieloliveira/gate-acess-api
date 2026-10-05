@@ -4,6 +4,7 @@ const assertBelongsToCompany = require('../../utils/assertBelongsToCompany');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
 const { resolveKm } = require('../../utils/km');
 const parseEditTimestamp = require('../../utils/parseEditTimestamp');
+const { parseRetroactiveTime, parseRetroactiveReason, formatDateTime } = require('../../utils/retroactive');
 const repository = require('./fleet-logs.repository');
 const peopleRepository = require('../people/people.repository');
 const peopleService = require('../people/people.service');
@@ -108,6 +109,12 @@ function toDTO(log) {
     fuelLevelReturn: log.fuel_level_return,
     status: log.status,
     observation: decryptField(log.observation_encrypted),
+    // Lançamento retroativo: justificativa preenchida = passagem lançada
+    // depois (selo nas telas). A saída foi lançada de fato em createdAt.
+    departureRetroactiveReason: decryptField(log.departure_retroactive_reason_encrypted),
+    returnRetroactiveReason: decryptField(log.return_retroactive_reason_encrypted),
+    returnRecordedAt: log.return_recorded_at,
+    isRetroactive: Boolean(log.departure_retroactive_reason_encrypted || log.return_retroactive_reason_encrypted),
     createdAt: log.created_at,
     updatedAt: log.updated_at,
   };
@@ -198,15 +205,40 @@ async function resolveDestination(payload) {
   return `${city.name} - ${city.state_abbr}`;
 }
 
-function formatDepartureDate(value) {
-  return new Date(value).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+/**
+ * O mesmo veículo não pode ter dois registros cujo período se cruza — em
+ * particular, no máximo UMA saída em aberto (idx_fleet_logs_vehicle_on_trip,
+ * aqui com mensagem dizendo onde está o registro que conflita). Vale para a
+ * saída normal, a retroativa (`to` = retorno informado junto, ou null = ainda
+ * na rua) e a edição (`excludeId` = o próprio registro).
+ */
+async function assertNoOverlap(companyId, vehicle, label, { from, to = null, excludeId }) {
+  const conflict = await repository.findOverlappingByVehicle(companyId, vehicle.id, { from, to, excludeId });
+  if (!conflict) return;
+  if (!conflict.return_time && new Date(conflict.departure_time) <= from) {
+    throw new AppError(
+      `${label}: já está fora (saída em ${formatDateTime(conflict.departure_time)}). ` +
+        'Registre o retorno antes de uma nova saída.',
+      409
+    );
+  }
+  const departure = `saída em ${formatDateTime(conflict.departure_time)}`;
+  const period = conflict.return_time
+    ? `${departure}, retorno em ${formatDateTime(conflict.return_time)}`
+    : `${departure}, sem retorno`;
+  throw new AppError(
+    `${label} ${vehicle.license_plate}: já tem registro nesse período (${period}).` +
+      (to || excludeId !== undefined ? '' : ' Se já voltou, informe também o retorno.'),
+    409
+  );
 }
 
 /**
  * Veículo que vai sair (rodando ou em cima do guincho): da frota própria,
- * não bloqueado, não vendido/transferido e sem outra saída em aberto.
+ * não bloqueado, não vendido/transferido e sem outro registro no período
+ * (`period`: ver assertNoOverlap).
  */
-async function assertFleetVehicleCanLeave(companyId, vehicleId, label) {
+async function assertFleetVehicleCanLeave(companyId, vehicleId, label, period) {
   const vehicle = await assertBelongsToCompany(
     vehiclesRepository,
     vehicleId,
@@ -228,14 +260,7 @@ async function assertFleetVehicleCanLeave(companyId, vehicleId, label) {
       409
     );
   }
-  const openTrip = await repository.findOnTripByVehicle(companyId, vehicleId);
-  if (openTrip) {
-    throw new AppError(
-      `${label}: já está fora (saída em ${formatDepartureDate(openTrip.departure_time)}). ` +
-        'Registre o retorno antes de uma nova saída.',
-      409
-    );
-  }
+  await assertNoOverlap(companyId, vehicle, label, period);
   return vehicle;
 }
 
@@ -265,10 +290,29 @@ async function registerDeparture(auth, payload) {
     isKmUnavailable,
     fuelLevelDeparture,
     observation,
+    returnGateId,
+    kmReturn,
+    fuelLevelReturn,
   } = payload;
 
   if (!vehicleId || !departureGateId) {
     throw new AppError('vehicleId e departureGateId são obrigatórios', 400);
+  }
+
+  // Lançamento retroativo (esqueceu de registrar na hora): saída no passado
+  // e, se o veículo já voltou, o retorno junto — senão fica na rua e volta
+  // pelo fluxo normal. Sem departureTime é a saída de agora, como sempre.
+  const departureTime = parseRetroactiveTime(auth, payload.departureTime, 'Data de saída');
+  const returnTime = parseRetroactiveTime(auth, payload.returnTime, 'Data de retorno');
+  if (returnTime && !departureTime) {
+    throw new AppError('Retorno junto com a saída só vale para lançamento retroativo (informe a data de saída)', 400);
+  }
+  if (returnTime && returnTime < departureTime) {
+    throw new AppError('Data de retorno não pode ser anterior à data de saída', 400);
+  }
+  const retroactiveReason = departureTime ? parseRetroactiveReason(payload.retroactiveReason) : null;
+  if (returnTime && !returnGateId) {
+    throw new AppError('Informe o posto de retorno', 400);
   }
   if (!driverId) {
     throw new AppError('Informe o motorista do veículo', 400);
@@ -281,6 +325,9 @@ async function registerDeparture(auth, payload) {
   }
   const mainNoReturn = parseNoReturnReason(noReturnReason, 'Veículo');
   const carriedNoReturn = parseNoReturnReason(carriedNoReturnReason, 'Veículo transportado');
+  if (returnTime && mainNoReturn) {
+    throw new AppError('Veículo que não retorna (vendido/transferido) não tem data de retorno', 400);
+  }
   if (carriedNoReturn && !carriedVehicleId) {
     throw new AppError('carriedNoReturnReason só vale para veículo transportado da frota', 400);
   }
@@ -291,11 +338,31 @@ async function registerDeparture(auth, payload) {
 
   const kmUnavailable = Boolean(isKmUnavailable);
   const kmDepartureValue = parseRequiredKm(kmDeparture, kmUnavailable, 'KM de saída');
-
-  await assertFleetVehicleCanLeave(companyId, Number(vehicleId), 'Veículo');
-  if (carriedVehicleId) {
-    await assertFleetVehicleCanLeave(companyId, Number(carriedVehicleId), 'Veículo transportado');
+  const kmReturnValue = returnTime ? parseRequiredKm(kmReturn, kmUnavailable, 'KM de retorno') : null;
+  if (kmReturnValue !== null && kmDepartureValue !== null && kmReturnValue <= kmDepartureValue) {
+    throw new AppError(
+      `KM de retorno deve ser maior que o KM de saída (${kmDepartureValue}). ` +
+        'Se o painel do veículo não está legível, marque "KM indisponível".',
+      400
+    );
   }
+
+  const now = new Date();
+  const from = departureTime ?? now;
+  await assertFleetVehicleCanLeave(companyId, Number(vehicleId), 'Veículo', { from, to: returnTime });
+  // O veículo levado em cima volta à parte (rodando): fica na rua.
+  if (carriedVehicleId) {
+    await assertFleetVehicleCanLeave(companyId, Number(carriedVehicleId), 'Veículo transportado', { from, to: null });
+  }
+  if (returnTime) {
+    await assertBelongsToCompany(
+      gatesRepository,
+      Number(returnGateId),
+      companyId,
+      'returnGateId inválido: portão não encontrado nesta empresa'
+    );
+  }
+  const retroactiveReasonEncrypted = encryptField(retroactiveReason);
 
   const driver = await assertBelongsToCompany(
     peopleRepository,
@@ -330,7 +397,6 @@ async function registerDeparture(auth, payload) {
 
   try {
     const log = await withAuthTransaction(auth, async (trx) => {
-      const departureTime = new Date();
       const main = await repository.insert(
         {
           company_id: companyId,
@@ -339,7 +405,7 @@ async function registerDeparture(auth, payload) {
           carried_vehicle_plate: carriedPlate,
           destination,
           purpose_encrypted: encryptField(purposeText),
-          departure_time: departureTime,
+          departure_time: from,
           departure_gate_id: Number(departureGateId),
           departure_operator_id: auth.userId,
           km_departure: kmDepartureValue,
@@ -348,6 +414,17 @@ async function registerDeparture(auth, payload) {
           observation_encrypted: encryptField(observation || null),
           status: mainNoReturn ? STATUS.NO_RETURN : STATUS.ON_TRIP,
           no_return_reason: mainNoReturn,
+          departure_retroactive_reason_encrypted: retroactiveReasonEncrypted,
+          ...(returnTime && {
+            return_time: returnTime,
+            return_gate_id: Number(returnGateId),
+            return_operator_id: auth.userId,
+            km_return: kmReturnValue,
+            fuel_level_return: fuelLevelReturn !== undefined ? Number(fuelLevelReturn) : null,
+            status: STATUS.RETURNED,
+            return_retroactive_reason_encrypted: retroactiveReasonEncrypted,
+            return_recorded_at: now,
+          }),
         },
         trx
       );
@@ -365,9 +442,10 @@ async function registerDeparture(auth, payload) {
             transport_log_id: main.id,
             destination,
             purpose_encrypted: encryptField(purposeText),
-            departure_time: departureTime,
+            departure_time: from,
             departure_gate_id: Number(departureGateId),
             departure_operator_id: auth.userId,
+            departure_retroactive_reason_encrypted: retroactiveReasonEncrypted,
             km_departure: carriedLastKm ? Number(carriedLastKm.km) : null,
             is_km_unavailable: false,
             status: carriedNoReturn ? STATUS.NO_RETURN : STATUS.ON_TRIP,
@@ -417,6 +495,15 @@ async function registerReturn(auth, id, payload) {
   if (!returnGateId) {
     throw new AppError('returnGateId é obrigatório', 400);
   }
+  // Retorno retroativo: o veículo voltou antes e o operador esqueceu de registrar.
+  const returnTime = parseRetroactiveTime(auth, payload.returnTime, 'Data de retorno');
+  const retroactiveReason = returnTime ? parseRetroactiveReason(payload.retroactiveReason) : null;
+  if (returnTime && returnTime < new Date(log.departure_time)) {
+    throw new AppError(
+      `Data de retorno não pode ser anterior à data de saída (${formatDateTime(log.departure_time)})`,
+      400
+    );
+  }
 
   const kmUnavailable = Boolean(isKmUnavailable);
   const kmReturnValue = parseRequiredKm(kmReturn, kmUnavailable, 'KM de retorno');
@@ -440,11 +527,15 @@ async function registerReturn(auth, id, payload) {
   );
 
   const changes = {
-    return_time: new Date(),
+    return_time: returnTime ?? new Date(),
     return_gate_id: Number(returnGateId),
     return_operator_id: auth.userId,
     status: STATUS.RETURNED,
   };
+  if (returnTime) {
+    changes.return_retroactive_reason_encrypted = encryptField(retroactiveReason);
+    changes.return_recorded_at = new Date();
+  }
   changes.km_return = kmReturnValue;
   // Só liga o flag: se a saída já foi marcada como indisponível, o retorno
   // com KM válido não pode desligar isso.
@@ -516,10 +607,11 @@ async function updateLog(auth, id, payload) {
     }
     changes.driver_id = Number(payload.driverId);
   }
-  // Troca do veículo (indicado errado na saída). Com a viagem em aberto, o
-  // índice idx_fleet_logs_vehicle_on_trip barra um veículo que já está fora.
+  // Troca do veículo (indicado errado na saída) — o período do registro não
+  // pode cruzar outro do veículo novo (conferido abaixo, junto com as datas).
+  let vehicle = null;
   if (has('vehicleId') && Number(payload.vehicleId) !== log.vehicle_id) {
-    const vehicle = await assertBelongsToCompany(
+    vehicle = await assertBelongsToCompany(
       vehiclesRepository,
       Number(payload.vehicleId),
       companyId,
@@ -552,6 +644,20 @@ async function updateLog(auth, id, payload) {
     }
     if (has('departureTime')) changes.departure_time = departureTime;
     if (has('returnTime')) changes.return_time = returnTime;
+  }
+
+  if (vehicle || changes.departure_time !== undefined || changes.return_time !== undefined) {
+    const returnTime = changes.return_time ?? log.return_time;
+    await assertNoOverlap(
+      companyId,
+      vehicle ?? (await vehiclesRepository.findByIdAndCompany(log.vehicle_id, companyId)),
+      'Veículo',
+      {
+        from: new Date(changes.departure_time ?? log.departure_time),
+        to: returnTime ? new Date(returnTime) : null,
+        excludeId: log.id,
+      }
+    );
   }
 
   // KM só é revalidado quando a edição mexe em KM: registros antigos (de

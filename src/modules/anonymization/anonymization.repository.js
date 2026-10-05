@@ -60,6 +60,15 @@ function clearFleetLogObservations(trx, ids) {
   return trx('fleet_logs').whereIn('id', ids).update({ observation_encrypted: null });
 }
 
+// Justificativa de lançamento retroativo: troca o texto (pode citar a pessoa)
+// pelo genérico, mas só onde havia — o registro continua marcado retroativo.
+async function redactRetroactiveReasons(trx, tableName, ids, columns, redactedEncrypted) {
+  if (ids.length === 0) return;
+  for (const column of columns) {
+    await trx(tableName).whereIn('id', ids).whereNotNull(column).update({ [column]: redactedEncrypted });
+  }
+}
+
 function findAuditRows(trx, companyId, tableName, recordIds) {
   if (recordIds.length === 0) return [];
   return trx('audit_logs')
@@ -83,6 +92,7 @@ function insertAuditRecord(trx, { companyId, userId, personId }) {
 }
 
 module.exports = {
+  redactRetroactiveReasons,
   VEHICLE_TYPE_FLEET,
   findPerson,
   countOpenRecords,

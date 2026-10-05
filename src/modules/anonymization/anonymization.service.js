@@ -11,6 +11,12 @@ const PERSON_KEYS = ['cpf_encrypted', 'cpf_bindex', 'rg_encrypted', 'phone_encry
 // Nos acessos em que ela foi a visitante: texto livre, foto e recibo.
 const ACCESS_KEYS = ['visit_reason_encrypted', 'observation_encrypted', 'photo_url', 'signed_receipt_url'];
 const FLEET_KEYS = ['observation_encrypted'];
+// Justificativa de lançamento retroativo (texto livre do operador): no
+// registro vira o texto genérico (mantém o selo "Retroativo"); nas cópias da
+// auditoria é zerada como os outros textos livres.
+const ACCESS_RETRO_KEYS = ['entry_retroactive_reason_encrypted', 'exit_retroactive_reason_encrypted'];
+const FLEET_RETRO_KEYS = ['departure_retroactive_reason_encrypted', 'return_retroactive_reason_encrypted'];
+const REDACTED_REASON = 'Removido (anonimização LGPD)';
 
 function anonymousName(personId) {
   return `Titular anonimizado #${personId}`;
@@ -92,13 +98,23 @@ async function anonymizePerson(auth, personId) {
     const fleetLogIds = await repository.findFleetLogIdsAsDriver(trx, companyId, personId);
     await repository.clearFleetLogObservations(trx, fleetLogIds);
 
+    const redacted = encryptField(REDACTED_REASON);
+    await repository.redactRetroactiveReasons(
+      trx,
+      'access_logs',
+      accessLogs.map((log) => log.id),
+      ACCESS_RETRO_KEYS,
+      redacted
+    );
+    await repository.redactRetroactiveReasons(trx, 'fleet_logs', fleetLogIds, FLEET_RETRO_KEYS, redacted);
+
     await scrubAuditTrail(trx, companyId, 'people', [personId], () => ({
       name_encrypted: null,
       ...Object.fromEntries(PERSON_KEYS.map((key) => [key, null])),
     }));
     // vehicle_id só é zerado nas cópias dos acessos em que o veículo era de
     // visitante (mesma regra do registro em si).
-    const accessOverrides = Object.fromEntries(ACCESS_KEYS.map((key) => [key, null]));
+    const accessOverrides = Object.fromEntries([...ACCESS_KEYS, ...ACCESS_RETRO_KEYS].map((key) => [key, null]));
     await scrubAuditTrail(
       trx,
       companyId,
@@ -107,7 +123,7 @@ async function anonymizePerson(auth, personId) {
       (recordId) => (unlinkedVehicle.has(recordId) ? { ...accessOverrides, vehicle_id: null } : accessOverrides)
     );
     await scrubAuditTrail(trx, companyId, 'fleet_logs', fleetLogIds, () =>
-      Object.fromEntries(FLEET_KEYS.map((key) => [key, null]))
+      Object.fromEntries([...FLEET_KEYS, ...FLEET_RETRO_KEYS].map((key) => [key, null]))
     );
 
     await repository.insertAuditRecord(trx, { companyId, userId, personId });

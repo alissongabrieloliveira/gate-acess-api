@@ -22,6 +22,9 @@ const COLUMNS = [
   'photo_url',
   'status',
   'observation_encrypted',
+  'entry_retroactive_reason_encrypted',
+  'exit_retroactive_reason_encrypted',
+  'exit_recorded_at',
   'created_at',
   'updated_at',
 ];
@@ -77,21 +80,19 @@ function listActiveByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ACTIVE' }).orderBy('entry_time', 'asc');
 }
 
-// Entrada em aberto da pessoa / do veículo (no máximo uma de cada —
+// Registro da mesma pessoa/veículo cujo período cruza [from, to) — `to`
+// null = ainda dentro (período aberto). Registro em aberto vai até "agora em
+// diante". Encostar (saída às 10h, outra entrada às 10h) não conta. Cobre
+// também "já está dentro" (no máximo uma entrada em aberto — índices
 // idx_access_logs_person_active / idx_access_logs_vehicle_active).
-// excludeId: o próprio registro, na edição.
-function findActiveByColumn(companyId, column, value, excludeId) {
-  const query = baseQuery(companyId).where({ [column]: value, status: 'ACTIVE' });
+// excludeId: o próprio registro, na edição. Prefere o registro em aberto.
+function findOverlapping(companyId, column, value, { from, to, excludeId }) {
+  const query = baseQuery(companyId)
+    .where(column, value)
+    .andWhere((qb) => qb.whereNull('exit_time').orWhere('exit_time', '>', from));
+  if (to) query.andWhere('entry_time', '<', to);
   if (excludeId !== undefined) query.whereNot({ id: excludeId });
-  return query.first();
-}
-
-function findActiveByPerson(companyId, personId, excludeId) {
-  return findActiveByColumn(companyId, 'person_id', personId, excludeId);
-}
-
-function findActiveByVehicle(companyId, vehicleId, excludeId) {
-  return findActiveByColumn(companyId, 'vehicle_id', vehicleId, excludeId);
+  return query.orderByRaw('exit_time IS NULL DESC, entry_time DESC').first();
 }
 
 // Acesso mais recente do veículo com algum KM registrado; COALESCE porque a
@@ -130,8 +131,7 @@ module.exports = {
   listByCompany,
   countByCompany,
   listActiveByCompany,
-  findActiveByPerson,
-  findActiveByVehicle,
+  findOverlapping,
   findLastKnownKm,
   insert,
   update,

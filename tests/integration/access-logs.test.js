@@ -6,6 +6,7 @@ const { signAccessToken } = require('../../src/utils/jwt');
 const {
   createCompany,
   createAdminUser,
+  createRegularUser,
   createPerson,
   createVehicle,
   createGate,
@@ -215,6 +216,170 @@ describe('Controle de Acessos (access-logs) — entrada, saída e regras de neg�
           destinationCityId: await testCityId(),
         });
       expect(departure.status).toBe(201);
+    });
+  });
+
+  describe('lançamento retroativo', () => {
+    const HOUR = 60 * 60 * 1000;
+    const ago = (hours) => new Date(Date.now() - hours * HOUR).toISOString();
+    const reason = 'Esqueci de lançar na correria';
+    let operatorToken;
+
+    beforeAll(async () => {
+      const operator = await createRegularUser(company.id);
+      operatorToken = signAccessToken({ userId: operator.id, companyId: company.id, rules: 0, mustChangePassword: false });
+    });
+
+    const enter = (body, auth = token) =>
+      request(app).post('/api/v1/access-logs').set('Authorization', `Bearer ${auth}`).send({ entryGateId: gate.id, ...body });
+    const exit = (id, body = {}) =>
+      request(app).patch(`/api/v1/access-logs/${id}/exit`).set('Authorization', `Bearer ${token}`).send({ exitGateId: gate.id, ...body });
+
+    test('só a entrada no passado: fica dentro, com selo, e sai pelo fluxo normal', async () => {
+      const person = await createPerson({ companyId: company.id });
+      const entryTime = ago(3);
+      const res = await enter({ personId: person.id, entryTime, retroactiveReason: reason }, operatorToken);
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({ status: 'ACTIVE', isRetroactive: true, entryRetroactiveReason: reason, exitTime: null });
+      expect(new Date(res.body.entryTime).toISOString()).toBe(entryTime);
+
+      const out = await exit(res.body.id);
+      expect(out.status).toBe(200);
+      expect(out.body).toMatchObject({ status: 'FINISHED', exitRetroactiveReason: null, exitRecordedAt: null });
+    });
+
+    test('entrada e saída no passado: registro já nasce finalizado', async () => {
+      const person = await createPerson({ companyId: company.id, personType: 3 });
+      const vehicle = await createVehicle({ companyId: company.id });
+      const res = await enter({
+        personId: person.id,
+        vehicleId: vehicle.id,
+        entryTime: ago(5),
+        exitTime: ago(4),
+        exitGateId: gate.id,
+        kmEntry: 100,
+        kmExit: 120,
+        retroactiveReason: reason,
+      });
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        status: 'FINISHED',
+        exitGateId: gate.id,
+        kmExit: 120,
+        entryRetroactiveReason: reason,
+        exitRetroactiveReason: reason,
+      });
+      expect(res.body.exitRecordedAt).not.toBeNull();
+
+      // Funcionário com veículo: KM de saída também é obrigatório.
+      const other = await createPerson({ companyId: company.id, personType: 3 });
+      const otherVehicle = await createVehicle({ companyId: company.id });
+      const missingKm = await enter({
+        personId: other.id,
+        vehicleId: otherVehicle.id,
+        entryTime: ago(5),
+        exitTime: ago(4),
+        exitGateId: gate.id,
+        kmEntry: 100,
+        retroactiveReason: reason,
+      });
+      expect(missingKm.status).toBe(400);
+    });
+
+    test('validações: motivo, futuro, saída antes da entrada, saída sem entrada retroativa, posto de saída', async () => {
+      const person = await createPerson({ companyId: company.id });
+      const base = { personId: person.id, retroactiveReason: reason };
+      expect((await enter({ ...base, entryTime: ago(2), retroactiveReason: '' })).body.error).toMatch(/motivo/);
+      expect((await enter({ ...base, entryTime: new Date(Date.now() + 2 * HOUR).toISOString() })).status).toBe(400);
+      expect((await enter({ ...base, entryTime: ago(2), exitTime: ago(3), exitGateId: gate.id })).status).toBe(400);
+      expect((await enter({ ...base, exitTime: ago(1), exitGateId: gate.id })).status).toBe(400);
+      expect((await enter({ ...base, entryTime: ago(2), exitTime: ago(1) })).body.error).toMatch(/posto de saída/);
+      expect(await db('access_logs').where({ person_id: person.id })).toHaveLength(0);
+    });
+
+    test('operador vai até 7 dias atrás; admin sem limite', async () => {
+      const person = await createPerson({ companyId: company.id });
+      const old = {
+        personId: person.id,
+        entryTime: ago(8 * 24),
+        exitTime: ago(8 * 24 - 1),
+        exitGateId: gate.id,
+        retroactiveReason: reason,
+      };
+      const denied = await enter(old, operatorToken);
+      expect(denied.status).toBe(400);
+      expect(denied.body.error).toMatch(/7 dias/);
+      expect((await enter(old)).status).toBe(201);
+    });
+
+    test('período que cruza outro registro da mesma pessoa -> 409; encostar pode', async () => {
+      const person = await createPerson({ companyId: company.id, name: 'Rita Retro' });
+      const first = await enter({ personId: person.id, entryTime: ago(6), exitTime: ago(5), exitGateId: gate.id, retroactiveReason: reason });
+      expect(first.status).toBe(201);
+
+      const crossing = await enter({
+        personId: person.id,
+        entryTime: ago(5.5),
+        exitTime: ago(4),
+        exitGateId: gate.id,
+        retroactiveReason: reason,
+      });
+      expect(crossing.status).toBe(409);
+      expect(crossing.body.error).toMatch(/Rita Retro já tem registro nesse período/);
+
+      const touching = await enter({
+        personId: person.id,
+        entryTime: first.body.exitTime,
+        exitTime: ago(4),
+        exitGateId: gate.id,
+        retroactiveReason: reason,
+      });
+      expect(touching.status).toBe(201);
+
+      // Entrada retroativa em aberto antes de um registro já encerrado: precisa da saída.
+      const open = await enter({ personId: person.id, entryTime: ago(7), retroactiveReason: reason });
+      expect(open.status).toBe(409);
+      expect(open.body.error).toMatch(/informe também a saída/);
+    });
+
+    test('pessoa/placa que está dentro agora pode ter passagem retroativa de antes da entrada atual', async () => {
+      const person = await createPerson({ companyId: company.id });
+      const vehicle = await createVehicle({ companyId: company.id });
+      expect((await enter({ personId: person.id, vehicleId: vehicle.id })).status).toBe(201);
+
+      const before = await enter({
+        personId: person.id,
+        vehicleId: vehicle.id,
+        entryTime: ago(3),
+        exitTime: ago(2),
+        exitGateId: gate.id,
+        retroactiveReason: reason,
+      });
+      expect(before.status).toBe(201);
+
+      // Mas não uma que avance sobre a entrada atual (o veículo já estava dentro).
+      const other = await createPerson({ companyId: company.id });
+      const during = await enter({ personId: other.id, vehicleId: vehicle.id, entryTime: ago(1), retroactiveReason: reason });
+      expect(during.status).toBe(409);
+      expect(during.body.error).toMatch(/Veículo .* já/);
+    });
+
+    test('saída retroativa: grava a hora informada, o motivo e quando foi lançada', async () => {
+      const person = await createPerson({ companyId: company.id });
+      const entry = await enter({ personId: person.id, entryTime: ago(4), retroactiveReason: reason });
+
+      expect((await exit(entry.body.id, { exitTime: ago(5), retroactiveReason: reason })).status).toBe(400);
+      expect((await exit(entry.body.id, { exitTime: ago(2) })).body.error).toMatch(/motivo/);
+
+      const exitTime = ago(2);
+      const out = await exit(entry.body.id, { exitTime, retroactiveReason: 'Saiu e não registraram' });
+      expect(out.status).toBe(200);
+      expect(new Date(out.body.exitTime).toISOString()).toBe(exitTime);
+      expect(out.body.exitRetroactiveReason).toBe('Saiu e não registraram');
+      expect(out.body.exitRecordedAt).not.toBeNull();
+      // Texto livre fica cifrado no banco.
+      const row = await db('access_logs').where({ id: entry.body.id }).first();
+      expect(row.exit_retroactive_reason_encrypted).not.toContain('registraram');
     });
   });
 

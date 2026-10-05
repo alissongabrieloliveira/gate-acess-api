@@ -114,13 +114,19 @@ async function createPerson({ companyId, name, cpf, personType = 1, isBlocked = 
   return { ...row, cpf: rawCpf };
 }
 
+// Placa única por empresa (idx_vehicles_plate_unique): sequencial em vez de
+// pedaço do sufixo aleatório, que colidia com muitos veículos na mesma empresa.
+// Cada arquivo de teste cria a(s) própria(s) empresa(s), então reiniciar a
+// contagem por arquivo não colide.
+let plateCounter = 0;
+
 async function createVehicle({ companyId, licensePlate, brand, model, vehicleType = 1 } = {}) {
-  const suffix = uniqueSuffix().slice(-6);
+  plateCounter += 1;
   const [row] = await db('vehicles')
     .insert({
       company_id: companyId,
       vehicle_type: vehicleType,
-      license_plate: licensePlate ?? `TST${suffix}`.slice(0, 7).toUpperCase(),
+      license_plate: licensePlate ?? `TST${String(plateCounter).padStart(4, '0')}`,
       brand: brand ?? 'Marca Teste',
       model: model ?? 'Modelo Teste',
     })

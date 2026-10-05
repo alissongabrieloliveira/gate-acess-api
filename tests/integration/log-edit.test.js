@@ -199,20 +199,28 @@ describe('Edição de registros (PUT /access-logs/:id e PUT /fleet-logs/:id) —
       expect((await put(log.id, { personId: null })).status).toBe(400);
     });
 
-    test('registro em aberto: pessoa/veículo que já estão dentro em outro registro -> 409', async () => {
+    test('troca/datas que fazem o período cruzar outro registro da mesma pessoa/veículo -> 409', async () => {
       const log = await createAccess({ finished: false });
       const other = await createAccess({ finished: false });
 
+      // Os dois em aberto: trocar pela pessoa/veículo do outro cruza o período.
       const byPerson = await put(log.id, { personId: other.personId });
       expect(byPerson.status).toBe(409);
-      expect(byPerson.body.error).toMatch(/já está dentro/);
+      expect(byPerson.body.error).toMatch(/já tem registro nesse período .*ainda dentro/);
       expect((await put(log.id, { vehicleId: other.vehicleId })).status).toBe(409);
       // Reenviar a própria pessoa/veículo não conflita consigo mesmo.
       expect((await put(log.id, { personId: log.personId, vehicleId: log.vehicleId })).status).toBe(200);
 
-      // Registro finalizado (histórico) pode apontar pra quem está dentro agora.
+      // Registro finalizado ANTES da entrada do outro pode apontar pra ele...
       const finished = await createAccess();
+      await db('access_logs')
+        .where({ id: finished.id })
+        .update({ entry_time: minutesAgo(300), exit_time: minutesAgo(240) });
       expect((await put(finished.id, { vehicleId: other.vehicleId })).status).toBe(200);
+      // ...mas não se a saída passar a ser depois da entrada do outro.
+      const crossing = await put(finished.id, { exitTime: new Date().toISOString() });
+      expect(crossing.status).toBe(409);
+      expect(crossing.body.error).toMatch(/Veículo .* já tem registro nesse período/);
     });
 
     test('pessoa de OUTRA empresa -> 400; operador -> 403', async () => {

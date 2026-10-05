@@ -160,6 +160,53 @@ describe('POST /people/:id/anonymize', () => {
     expect(record).toMatchObject({ user_id: admin.id });
   });
 
+  test('justificativa de lançamento retroativo sai, o selo "Retroativo" fica', async () => {
+    const person = await createPerson({ companyId: company.id, name: 'Paulo Retro', personType: PERSON_TYPE_EMPLOYEE });
+    const fleetCar = await createVehicle({ companyId: company.id, vehicleType: VEHICLE_TYPE_FLEET });
+    const hoursAgo = (h) => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+    const reason = 'Paulo entrou pelo portão lateral';
+
+    const entry = await auth(request(app).post('/api/v1/access-logs')).send({
+      personId: person.id,
+      entryGateId: gate.id,
+      entryTime: hoursAgo(5),
+      exitTime: hoursAgo(4),
+      exitGateId: gate.id,
+      retroactiveReason: reason,
+    });
+    expect(entry.status).toBe(201);
+    const trip = await auth(request(app).post('/api/v1/fleet-logs')).send({
+      destinationCityId: await testCityId(),
+      vehicleId: fleetCar.id,
+      driverId: person.id,
+      departureGateId: gate.id,
+      kmDeparture: 100,
+      departureTime: hoursAgo(3),
+      returnTime: hoursAgo(2),
+      returnGateId: gate.id,
+      kmReturn: 150,
+      retroactiveReason: reason,
+    });
+    expect(trip.status).toBe(201);
+
+    expect((await anonymize(person.id)).status).toBe(200);
+
+    const access = await auth(request(app).get(`/api/v1/access-logs/${entry.body.id}`));
+    expect(access.body).toMatchObject({
+      isRetroactive: true,
+      entryRetroactiveReason: 'Removido (anonimização LGPD)',
+      exitRetroactiveReason: 'Removido (anonimização LGPD)',
+    });
+    const fleet = await auth(request(app).get(`/api/v1/fleet-logs/${trip.body.id}`));
+    expect(fleet.body).toMatchObject({ isRetroactive: true, departureRetroactiveReason: 'Removido (anonimização LGPD)' });
+
+    // Nas cópias da auditoria o texto é zerado.
+    const audit = await db('audit_logs').where({ table_name: 'access_logs', record_id: entry.body.id });
+    for (const row of audit) {
+      expect(row.new_data?.entry_retroactive_reason_encrypted ?? null).toBeNull();
+    }
+  });
+
   test('pessoa anonimizada some da lista e da busca e não pode mais ser usada', async () => {
     const h = await personWithHistory();
     expect((await anonymize(h.person.id)).status).toBe(200);

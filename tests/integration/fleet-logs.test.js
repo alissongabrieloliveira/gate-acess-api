@@ -322,6 +322,131 @@ describe('Controle de Frota (fleet-logs) — saída, retorno, guincho e não ret
     });
   });
 
+  describe('lançamento retroativo', () => {
+    const HOUR = 60 * 60 * 1000;
+    const ago = (hours) => new Date(Date.now() - hours * HOUR).toISOString();
+    const reason = 'Motorista saiu e não registraram';
+    let operatorToken;
+
+    beforeAll(async () => {
+      const operator = await createUser({ companyId: company.id });
+      operatorToken = signAccessToken({ userId: operator.id, companyId: company.id, rules: 0, mustChangePassword: false });
+    });
+
+    test('só a saída no passado: fica na rua, com selo, e volta pelo fluxo normal', async () => {
+      const vehicle = await fleetVehicle();
+      const departureTime = ago(3);
+      const res = await postDeparture({ vehicleId: vehicle.id, departureTime, retroactiveReason: reason }, operatorToken);
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({ status: 'ON_TRIP', isRetroactive: true, departureRetroactiveReason: reason });
+      expect(new Date(res.body.departureTime).toISOString()).toBe(departureTime);
+
+      const back = await postReturn(res.body.id, { returnGateId: gate.id, kmReturn: 1100 });
+      expect(back.status).toBe(200);
+      expect(back.body).toMatchObject({ status: 'RETURNED', returnRetroactiveReason: null, returnRecordedAt: null });
+    });
+
+    test('saída e retorno no passado: registro já nasce retornado', async () => {
+      const vehicle = await fleetVehicle();
+      const res = await postDeparture({
+        vehicleId: vehicle.id,
+        departureTime: ago(6),
+        returnTime: ago(4),
+        returnGateId: gate.id,
+        kmReturn: 1080,
+        retroactiveReason: reason,
+      });
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        status: 'RETURNED',
+        returnGateId: gate.id,
+        kmReturn: 1080,
+        departureRetroactiveReason: reason,
+        returnRetroactiveReason: reason,
+      });
+      expect(res.body.returnRecordedAt).not.toBeNull();
+    });
+
+    test('validações: motivo, retorno sem saída retroativa, posto/KM de retorno, não retorna com retorno', async () => {
+      const vehicle = await fleetVehicle();
+      const base = { vehicleId: vehicle.id, departureTime: ago(6), retroactiveReason: reason };
+      expect((await postDeparture({ ...base, retroactiveReason: undefined })).body.error).toMatch(/motivo/);
+      expect((await postDeparture({ vehicleId: vehicle.id, returnTime: ago(1), returnGateId: gate.id, kmReturn: 1100 })).status).toBe(400);
+      expect((await postDeparture({ ...base, returnTime: ago(4), kmReturn: 1100 })).body.error).toMatch(/posto de retorno/);
+      expect((await postDeparture({ ...base, returnTime: ago(4), returnGateId: gate.id })).status).toBe(400);
+      expect((await postDeparture({ ...base, returnTime: ago(4), returnGateId: gate.id, kmReturn: 900 })).status).toBe(400);
+      expect((await postDeparture({ ...base, returnTime: ago(7), returnGateId: gate.id, kmReturn: 1100 })).status).toBe(400);
+      expect(
+        (await postDeparture({ ...base, returnTime: ago(4), returnGateId: gate.id, kmReturn: 1100, noReturnReason: 'SOLD' }))
+          .status
+      ).toBe(400);
+      expect(await db('fleet_logs').where({ vehicle_id: vehicle.id })).toHaveLength(0);
+    });
+
+    test('operador vai até 7 dias atrás; admin sem limite', async () => {
+      const vehicle = await fleetVehicle();
+      const old = {
+        vehicleId: vehicle.id,
+        departureTime: ago(8 * 24),
+        returnTime: ago(8 * 24 - 2),
+        returnGateId: gate.id,
+        kmReturn: 1100,
+        retroactiveReason: reason,
+      };
+      const denied = await postDeparture(old, operatorToken);
+      expect(denied.status).toBe(400);
+      expect(denied.body.error).toMatch(/7 dias/);
+      expect((await postDeparture(old)).status).toBe(201);
+    });
+
+    test('veículo na rua agora aceita viagem retroativa de antes da saída atual, mas não uma que cruze', async () => {
+      const vehicle = await fleetVehicle();
+      expect((await postDeparture({ vehicleId: vehicle.id })).status).toBe(201);
+
+      const before = await postDeparture({
+        vehicleId: vehicle.id,
+        departureTime: ago(5),
+        returnTime: ago(3),
+        returnGateId: gate.id,
+        kmDeparture: 800,
+        kmReturn: 900,
+        retroactiveReason: reason,
+      });
+      expect(before.status).toBe(201);
+
+      const crossing = await postDeparture({
+        vehicleId: vehicle.id,
+        departureTime: ago(4),
+        returnTime: ago(2),
+        returnGateId: gate.id,
+        kmReturn: 1100,
+        retroactiveReason: reason,
+      });
+      expect(crossing.status).toBe(409);
+      expect(crossing.body.error).toMatch(/já tem registro nesse período/);
+
+      // Em aberto antes de uma viagem já encerrada: precisa do retorno.
+      const open = await postDeparture({ vehicleId: vehicle.id, departureTime: ago(6), retroactiveReason: reason });
+      expect(open.status).toBe(409);
+      expect(open.body.error).toMatch(/informe também o retorno/);
+    });
+
+    test('retorno retroativo: grava a hora informada, o motivo e quando foi lançado', async () => {
+      const vehicle = await fleetVehicle();
+      const dep = await postDeparture({ vehicleId: vehicle.id, departureTime: ago(5), retroactiveReason: reason });
+
+      expect((await postReturn(dep.body.id, { returnGateId: gate.id, kmReturn: 1100, returnTime: ago(6), retroactiveReason: reason })).status).toBe(400);
+      expect((await postReturn(dep.body.id, { returnGateId: gate.id, kmReturn: 1100, returnTime: ago(2) })).body.error).toMatch(/motivo/);
+
+      const returnTime = ago(2);
+      const back = await postReturn(dep.body.id, { returnGateId: gate.id, kmReturn: 1100, returnTime, retroactiveReason: 'Voltou de madrugada' });
+      expect(back.status).toBe(200);
+      expect(new Date(back.body.returnTime).toISOString()).toBe(returnTime);
+      expect(back.body).toMatchObject({ returnRetroactiveReason: 'Voltou de madrugada', status: 'RETURNED' });
+      expect(back.body.returnRecordedAt).not.toBeNull();
+    });
+  });
+
   describe('PATCH /:id/return', () => {
     async function registerDeparture(overrides = {}) {
       const vehicle = await fleetVehicle();

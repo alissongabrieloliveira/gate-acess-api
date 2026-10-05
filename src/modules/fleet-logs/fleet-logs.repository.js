@@ -24,6 +24,9 @@ const COLUMNS = [
   'fuel_level_return',
   'status',
   'observation_encrypted',
+  'departure_retroactive_reason_encrypted',
+  'return_retroactive_reason_encrypted',
+  'return_recorded_at',
   'created_at',
   'updated_at',
 ];
@@ -78,9 +81,27 @@ function listOnTripByCompany(companyId) {
   return baseQuery(companyId).where({ status: 'ON_TRIP' }).orderBy('departure_time', 'asc');
 }
 
-// Saída em aberto do veículo (no máximo uma — idx_fleet_logs_vehicle_on_trip).
-function findOnTripByVehicle(companyId, vehicleId) {
-  return baseQuery(companyId).where({ vehicle_id: vehicleId, status: 'ON_TRIP' }).first();
+// Registro do mesmo veículo cujo período cruza [from, to) — `to` null = ainda
+// na rua. Na rua (sem retorno) vai até "agora em diante". NO_RETURN (vendido/
+// transferido) é um ponto, a saída definitiva: depois que um admin reativa o
+// veículo, ele volta a sair normalmente. Encostar (retorno às 10h, nova saída
+// às 10h) não conta. Cobre também "já está fora" (idx_fleet_logs_vehicle_on_trip).
+// excludeId: o próprio registro, na edição. Prefere o registro em aberto.
+function findOverlappingByVehicle(companyId, vehicleId, { from, to, excludeId }) {
+  const query = baseQuery(companyId)
+    .where({ vehicle_id: vehicleId })
+    .andWhere((qb) =>
+      qb
+        .where((trip) =>
+          trip
+            .whereNot({ status: 'NO_RETURN' })
+            .andWhere((end) => end.whereNull('return_time').orWhere('return_time', '>', from))
+        )
+        .orWhere((noReturn) => noReturn.where({ status: 'NO_RETURN' }).andWhere('departure_time', '>', from))
+    );
+  if (to) query.andWhere('departure_time', '<', to);
+  if (excludeId !== undefined) query.whereNot({ id: excludeId });
+  return query.orderByRaw("return_time IS NULL AND status <> 'NO_RETURN' DESC, departure_time DESC").first();
 }
 
 // Registros dos veículos da frota levados em cima de cada guincho.
@@ -133,7 +154,7 @@ module.exports = {
   listByCompany,
   countByCompany,
   listOnTripByCompany,
-  findOnTripByVehicle,
+  findOverlappingByVehicle,
   listCarriedByTransportLogIds,
   findLastKnownKm,
   insert,
