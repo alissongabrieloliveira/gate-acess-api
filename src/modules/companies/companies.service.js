@@ -1,16 +1,49 @@
 const AppError = require('../../utils/AppError');
 const repository = require('./companies.repository');
 const withAuthTransaction = require('../../utils/withAuthTransaction');
+const { deletePhoto, getSignedUrls } = require('../../utils/supabaseStorage');
 
 const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
+
+// logo_url no banco é o CAMINHO no bucket privado; a resposta troca pela URL
+// assinada (ou null se a assinatura falhar) — mesmo padrão de photo_url em
+// people/vehicles.
+async function withSignedLogo(company) {
+  if (!company?.logo_url) return company;
+  const signed = await getSignedUrls([company.logo_url]);
+  return { ...company, logo_url: signed.get(company.logo_url) ?? null };
+}
 
 async function getOwnCompany(companyId) {
   const company = await repository.findById(companyId);
   if (!company) {
     throw new AppError('Empresa não encontrada', 404);
   }
-  return company;
+  return withSignedLogo(company);
+}
+
+async function replaceLogo(auth, logoPath) {
+  const existing = await repository.findById(auth.companyId);
+  if (!existing) {
+    throw new AppError('Empresa não encontrada', 404);
+  }
+  const company = await withAuthTransaction(auth, (trx) =>
+    repository.update(auth.companyId, { logo_url: logoPath }, trx)
+  );
+  // Só depois de gravar: se a escrita falhar, a logo antiga continua valendo.
+  if (existing.logo_url && existing.logo_url !== logoPath) {
+    await deletePhoto(existing.logo_url);
+  }
+  return withSignedLogo(company);
+}
+
+function setLogo(auth, logoPath) {
+  return replaceLogo(auth, logoPath);
+}
+
+function removeLogo(auth) {
+  return replaceLogo(auth, null);
 }
 
 // Campos editáveis pelo admin da própria empresa (inclui cnpj e state, apesar
@@ -64,7 +97,7 @@ async function updateOwnCompany(auth, payload) {
     if (!company) {
       throw new AppError('Empresa não encontrada', 404);
     }
-    return company;
+    return withSignedLogo(company);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
       throw new AppError('CNPJ já cadastrado para outra empresa', 409);
@@ -80,4 +113,4 @@ async function updateOwnCompany(auth, payload) {
   }
 }
 
-module.exports = { getOwnCompany, updateOwnCompany };
+module.exports = { getOwnCompany, updateOwnCompany, setLogo, removeLogo };

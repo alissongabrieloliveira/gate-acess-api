@@ -32,6 +32,12 @@ function createPhotoUpload() {
 const uploadVehiclePhoto = createPhotoUpload();
 const uploadPersonPhoto = createPhotoUpload();
 const uploadAccessLogPhoto = createPhotoUpload();
+// Logo vai embutida em todo recibo/relatório impresso: 2MB é folga de sobra.
+const uploadCompanyLogo = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: imageFileFilter,
+  limits: { fileSize: 2 * 1024 * 1024 },
+});
 
 // Nome do objeto no bucket: "<dirName>/<prefix>-<id>-<timestamp>.<ext>" —
 // mesmo formato de nome já usado quando os uploads ficavam em disco, agora
@@ -42,4 +48,4 @@ function buildPhotoPath(dirName, prefix, id, mimetype) {
   return `${dirName}/${prefix}-${id}-${Date.now()}${ext}`;
 }
 
-module.exports = { uploadVehiclePhoto, uploadPersonPhoto, uploadAccessLogPhoto, buildPhotoPath };
+module.exports = { uploadVehiclePhoto, uploadPersonPhoto, uploadAccessLogPhoto, uploadCompanyLogo, buildPhotoPath };

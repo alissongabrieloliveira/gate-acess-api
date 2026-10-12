@@ -12,8 +12,10 @@ function errorHandler(err, req, res, next) {
   }
 
   if (err instanceof multer.MulterError) {
+    // Logo da empresa tem limite menor (uploadCompanyLogo) que as fotos.
+    const maxSize = err.field === 'logo' ? '2MB' : '5MB';
     const message =
-      err.code === 'LIMIT_FILE_SIZE' ? 'A imagem deve ter no máximo 5MB.' : 'Não foi possível processar o arquivo enviado.';
+      err.code === 'LIMIT_FILE_SIZE' ? `A imagem deve ter no máximo ${maxSize}.` : 'Não foi possível processar o arquivo enviado.';
     logger.warn({ err }, message);
     return res.status(400).json({ error: message });
   }
