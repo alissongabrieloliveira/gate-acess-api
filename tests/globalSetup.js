@@ -53,17 +53,25 @@ async function ensureTestDatabaseExists(databaseUrl) {
   }
 }
 
-module.exports = async function globalSetup() {
-  await ensureTestDatabaseExists(process.env.DATABASE_URL);
+// Senha fixa de teste/dev do papel app_runtime (o mesmo de DATABASE_URL em
+// .env.test). O papel nasce NOLOGIN na migration 20261012150000; aqui, só no
+// Postgres local/CI, ele ganha LOGIN para a API sob teste conectar com ele.
+function appRuntimePassword() {
+  return decodeURIComponent(new URL(process.env.DATABASE_URL).password);
+}
 
-  // knexfile.js lê DATABASE_URL do process.env no momento em que é exigido —
-  // já está apontando pro portaria_test graças ao dotenv.config() no topo
-  // deste arquivo.
+module.exports = async function globalSetup() {
+  await ensureTestDatabaseExists(process.env.MIGRATION_DATABASE_URL);
+
+  // knexfile.js lê MIGRATION_DATABASE_URL (o dono) do process.env no momento
+  // em que é exigido — já está apontando pro portaria_test graças ao
+  // dotenv.config() no topo deste arquivo.
   const knexConfig = require('../knexfile');
   const knex = require('knex')(knexConfig);
 
   try {
     await knex.migrate.latest();
+    await knex.raw(`ALTER ROLE app_runtime LOGIN PASSWORD '${appRuntimePassword().replace(/'/g, "''")}'`);
     await knex.raw(`TRUNCATE TABLE ${BUSINESS_TABLES.join(', ')} RESTART IDENTITY CASCADE`);
   } finally {
     await knex.destroy();

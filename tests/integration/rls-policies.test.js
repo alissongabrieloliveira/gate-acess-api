@@ -1,8 +1,7 @@
-// Policies de RLS (migration 20261012130000). A API ainda conecta como dono das
-// tabelas, que ignora RLS (claude.md seção 5.5) — então estes testes trocam,
-// dentro de cada transação, para um papel sem ser dono (`rls_probe`) e
-// verificam o que as policies deixam ou não fazer. É o comportamento que a
-// aplicação terá quando passar a conectar com um papel próprio.
+// Policies de RLS (migration 20261012130000), direto no banco: cada caso troca,
+// dentro de uma transação, para o papel da aplicação (`app_runtime`, migration
+// 20261012150000 — não é dono das tabelas) e confere o que as policies e as
+// permissões dele deixam ou não fazer.
 const crypto = require('crypto');
 const db = require('../helpers/db');
 const {
@@ -13,9 +12,9 @@ const {
   createGate,
 } = require('../helpers/factories');
 
-const PROBE_ROLE = 'rls_probe';
+const APP_ROLE = 'app_runtime';
 
-// Roda `fn` como `rls_probe`, com a claim da empresa (ou sem claim), e sempre
+// Roda `fn` como `app_runtime`, com a claim da empresa (ou sem claim), e sempre
 // desfaz a transação no fim — nada do que o teste grava fica no banco.
 async function asTenant(claims, fn) {
   const trx = await db.transaction();
@@ -23,7 +22,7 @@ async function asTenant(claims, fn) {
     if (claims) {
       await trx.raw(`SELECT set_config('request.jwt.claims', ?, true)`, [JSON.stringify(claims)]);
     }
-    await trx.raw(`SET LOCAL ROLE ${PROBE_ROLE}`);
+    await trx.raw(`SET LOCAL ROLE ${APP_ROLE}`);
     return await fn(trx);
   } finally {
     await trx.rollback();
@@ -63,19 +62,6 @@ describe('Policies de RLS (papel sem ser dono das tabelas)', () => {
   let claimsA;
 
   beforeAll(async () => {
-    await db.raw(`
-      DO $$
-      BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${PROBE_ROLE}') THEN
-          CREATE ROLE ${PROBE_ROLE} NOLOGIN;
-        END IF;
-      END
-      $$;
-    `);
-    await db.raw(`GRANT USAGE ON SCHEMA public TO ${PROBE_ROLE}`);
-    await db.raw(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${PROBE_ROLE}`);
-    await db.raw(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${PROBE_ROLE}`);
-
     companyA = await createCompany();
     companyB = await createCompany();
     adminA = await createAdminUser(companyA.id);

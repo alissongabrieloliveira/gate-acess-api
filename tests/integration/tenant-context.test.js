@@ -14,6 +14,7 @@ jest.mock('../../src/utils/supabaseStorage', () => ({
 const request = require('supertest');
 const app = require('../../src/app');
 const db = require('../helpers/db');
+const appDb = require('../../src/config/db');
 const { signAccessToken } = require('../../src/utils/jwt');
 const { runWithTenant, currentTenantClaims } = require('../../src/utils/tenantContext');
 const withAuthTransaction = require('../../src/utils/withAuthTransaction');
@@ -23,7 +24,7 @@ const { createCompany, createAdminUser, createPerson } = require('../helpers/fac
 const { authenticateGatewayToken } = require('../../src/gatewayWs/deviceAuth');
 const { hashGatewayToken } = require('../../src/utils/gatewayToken');
 
-async function sessionClaims(trx = db) {
+async function sessionClaims(trx = appDb) {
   const result = await trx.raw(`SELECT current_setting('request.jwt.claims', true) AS claims`);
   return result.rows[0].claims;
 }
@@ -32,11 +33,11 @@ function claimsOf(companyId) {
   return JSON.stringify({ company_id: companyId });
 }
 
-// Registra a claim do contexto em cada consulta feita pelo knex durante `fn`
-// (o evento 'query' dispara no mesmo contexto assíncrono em que a conexão foi
-// tirada do pool e recebeu a claim).
+// Registra a claim do contexto em cada consulta feita pela conexão da API
+// durante `fn` (o evento 'query' dispara no mesmo contexto assíncrono em que a
+// conexão foi tirada do pool e recebeu a claim).
 let captured = null;
-db.on('query', (query) => {
+appDb.on('query', (query) => {
   if (captured) captured.push({ sql: query.sql, claims: currentTenantClaims() });
 });
 
@@ -104,7 +105,7 @@ describe('Claim do tenant em cada consulta', () => {
       const result = await runWithTenant(companyA.id, async () => {
         let inside;
         let after;
-        await db.transaction(async (outer) => {
+        await appDb.transaction(async (outer) => {
           await withAuthTransaction(auth, async (trx) => {
             inside = await sessionClaims(trx);
           });

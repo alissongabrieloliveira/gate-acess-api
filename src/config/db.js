@@ -35,6 +35,12 @@ class TenantAwarePgClient extends PgClient {
   }
 }
 
-const db = knex({ ...knexConfig, client: TenantAwarePgClient });
+// A aplicação usa sempre DATABASE_URL — nunca a MIGRATION_DATABASE_URL do dono
+// que o knexfile.js prefere para as migrations.
+const db = knex({
+  ...knexConfig,
+  client: TenantAwarePgClient,
+  connection: { ...knexConfig.connection, connectionString: process.env.DATABASE_URL },
+});
 
 module.exports = db;
