@@ -7,9 +7,15 @@
  * (instância única no Railway); não resolvido aqui.
  */
 const connections = new Map();
+// Desde quando cada gateway está sem conexão (alerta do Dashboard). Quem
+// nunca conectou desde o boot conta a partir do boot do processo — um deploy
+// derruba todas as conexões e o gateway leva alguns segundos para voltar.
+const disconnectedAt = new Map();
+const startedAt = new Date();
 
 function registerConnection(deviceId, ws) {
   connections.set(deviceId, ws);
+  disconnectedAt.delete(deviceId);
 }
 
 function getConnection(deviceId) {
@@ -22,7 +28,14 @@ function getConnection(deviceId) {
 function removeConnection(deviceId, ws) {
   if (connections.get(deviceId) === ws) {
     connections.delete(deviceId);
+    disconnectedAt.set(deviceId, new Date());
   }
 }
 
-module.exports = { registerConnection, getConnection, removeConnection };
+/** null se conectado agora; senão, desde quando está sem conexão. */
+function getOfflineSince(deviceId) {
+  if (connections.has(deviceId)) return null;
+  return disconnectedAt.get(deviceId) ?? startedAt;
+}
+
+module.exports = { registerConnection, getConnection, removeConnection, getOfflineSince };

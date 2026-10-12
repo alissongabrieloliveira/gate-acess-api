@@ -9,4 +9,13 @@ async function summary(req, res, next) {
   }
 }
 
-module.exports = { summary };
+async function alerts(req, res, next) {
+  try {
+    const result = await dashboardService.alerts(req.auth);
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { summary, alerts };
