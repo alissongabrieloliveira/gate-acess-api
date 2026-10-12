@@ -18,6 +18,7 @@ const {
   hashRefreshToken: hashResetToken,
 } = require('../../utils/refreshToken');
 const { sendPasswordResetEmail } = require('../../utils/email');
+const { runWithTenant } = require('../../utils/tenantContext');
 const parseDuration = require('../../utils/parseDuration');
 
 // Hash bcrypt de uma senha fixa qualquer, calculado uma única vez no início. Usado só
@@ -30,8 +31,17 @@ function refreshExpiresAt() {
   return new Date(Date.now() + parseDuration(env.refreshTokenExpiresIn));
 }
 
+// Os fluxos abaixo começam sem empresa no contexto: primeiro descobrem a
+// empresa do e-mail/token e rodam o resto dentro dela (utils/tenantContext.js).
+// E-mail/token desconhecido = sem empresa, e o fluxo segue igual a antes
+// (a busca não acha nada e cai no mesmo erro/resposta).
 async function login({ email, password, ipAddress, userAgent }) {
   const emailBindex = generateBindex(email);
+  const companyId = await repository.findCompanyIdByEmailBindex(emailBindex);
+  return runWithTenant(companyId, () => loginInCompany({ emailBindex, password, ipAddress, userAgent }));
+}
+
+async function loginInCompany({ emailBindex, password, ipAddress, userAgent }) {
   const user = await repository.findUserByEmailBindex(emailBindex);
 
   if (!user) {
@@ -88,6 +98,11 @@ async function refresh({ refreshTokenRaw, ipAddress, userAgent }) {
   }
 
   const tokenHash = hashRefreshToken(refreshTokenRaw);
+  const companyId = await repository.findCompanyIdByRefreshTokenHash(tokenHash);
+  return runWithTenant(companyId, () => refreshInCompany({ tokenHash, ipAddress, userAgent }));
+}
+
+async function refreshInCompany({ tokenHash, ipAddress, userAgent }) {
   const record = await repository.findRefreshTokenByHash(tokenHash);
 
   if (!record) {
@@ -145,11 +160,14 @@ async function logout({ refreshTokenRaw }) {
   if (!refreshTokenRaw) return;
 
   const tokenHash = hashRefreshToken(refreshTokenRaw);
-  const record = await repository.findRefreshTokenByHash(tokenHash);
+  const companyId = await repository.findCompanyIdByRefreshTokenHash(tokenHash);
+  await runWithTenant(companyId, async () => {
+    const record = await repository.findRefreshTokenByHash(tokenHash);
 
-  if (record && !record.revoked_at) {
-    await repository.revokeRefreshToken(record.id);
-  }
+    if (record && !record.revoked_at) {
+      await repository.revokeRefreshToken(record.id);
+    }
+  });
 }
 
 function passwordResetExpiresAt() {
@@ -161,6 +179,11 @@ function passwordResetExpiresAt() {
 // anti-enumeração do login: nunca revelar se um e-mail está cadastrado).
 async function forgotPassword({ email }) {
   const emailBindex = generateBindex(email);
+  const companyId = await repository.findCompanyIdByEmailBindex(emailBindex);
+  return runWithTenant(companyId, () => forgotPasswordInCompany({ email, emailBindex }));
+}
+
+async function forgotPasswordInCompany({ email, emailBindex }) {
   const user = await repository.findUserByEmailBindex(emailBindex);
 
   if (!user || !user.is_active) return;
@@ -185,6 +208,11 @@ async function resetPassword({ token, password }) {
   }
 
   const tokenHash = hashResetToken(token);
+  const companyId = await repository.findCompanyIdByPasswordResetTokenHash(tokenHash);
+  return runWithTenant(companyId, () => resetPasswordInCompany({ tokenHash, password }));
+}
+
+async function resetPasswordInCompany({ tokenHash, password }) {
   const record = await repository.findPasswordResetTokenByHash(tokenHash);
 
   // Mensagem genérica de propósito (não diferencia "não existe" de

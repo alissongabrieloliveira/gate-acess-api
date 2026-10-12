@@ -1,5 +1,26 @@
 const db = require('../../config/db');
 
+// Login, esqueci a senha, refresh e redefinir senha começam sem empresa no
+// contexto (só e-mail ou token). Estas funções de banco (SECURITY DEFINER,
+// migration 20261012140000) dizem só a qual empresa o e-mail/token pertence;
+// o fluxo segue dentro do contexto dela (auth.service.js), sujeito às policies.
+async function findCompanyIdBy(functionName, value) {
+  const result = await db.raw(`SELECT app_private.${functionName}(?) AS company_id`, [value]);
+  return result.rows[0]?.company_id ?? null;
+}
+
+function findCompanyIdByEmailBindex(emailBindex) {
+  return findCompanyIdBy('company_id_for_email_bindex', emailBindex);
+}
+
+function findCompanyIdByRefreshTokenHash(tokenHash) {
+  return findCompanyIdBy('company_id_for_refresh_token', tokenHash);
+}
+
+function findCompanyIdByPasswordResetTokenHash(tokenHash) {
+  return findCompanyIdBy('company_id_for_password_reset_token', tokenHash);
+}
+
 /** Busca usuário ativo (não soft-deletado) pelo blind index do e-mail. */
 function findUserByEmailBindex(emailBindex) {
   return db('users')
@@ -92,6 +113,9 @@ function updateUserPassword(userId, passwordHash, trx = db) {
 }
 
 module.exports = {
+  findCompanyIdByEmailBindex,
+  findCompanyIdByRefreshTokenHash,
+  findCompanyIdByPasswordResetTokenHash,
   findUserByEmailBindex,
   findActiveUserById,
   createLoginLog,

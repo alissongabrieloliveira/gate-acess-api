@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const db = require('../config/db');
 const logger = require('../utils/logger');
+const { runWithTenant } = require('../utils/tenantContext');
 const AppError = require('../utils/AppError');
 const { authenticateGatewayToken } = require('./deviceAuth');
 const { registerConnection, getConnection, removeConnection } = require('./connectionRegistry');
@@ -48,19 +49,24 @@ function attachGatewayWs(httpServer) {
     registerConnection(device.id, ws);
     logger.info({ gatewayDeviceId: device.id }, 'Gateway conectado');
 
-    db('gateway_devices')
-      .where({ id: device.id })
-      .update({ last_seen_at: db.fn.now() })
-      .catch((err) => logger.warn({ err, gatewayDeviceId: device.id }, 'Falha ao atualizar last_seen_at do gateway'));
+    // O evento 'connection' vem do servidor WS, fora de qualquer requisição:
+    // as consultas abaixo rodam explicitamente no tenant do gateway.
+    runWithTenant(device.company_id, async () =>
+      await db('gateway_devices')
+        .where({ id: device.id })
+        .update({ last_seen_at: db.fn.now() })
+    ).catch((err) => logger.warn({ err, gatewayDeviceId: device.id }, 'Falha ao atualizar last_seen_at do gateway'));
 
     // Envia a config de saídas (host/porta/número/serial) assim que o
     // gateway autentica — é assim que ele descobre com qual controlador
     // físico falar, sem precisar de um arquivo local na máquina do
     // cliente. Só enviada nesta conexão inicial; uma mudança de config
     // (reseed) só é pega na próxima reconexão do gateway.
-    db('gate_direction_outputs')
-      .select({ outputId: 'id', host: 'host', port: 'port', outputNumber: 'output_number', ns: 'ns' })
-      .where({ gateway_device_id: device.id })
+    runWithTenant(device.company_id, async () =>
+      await db('gate_direction_outputs')
+        .select({ outputId: 'id', host: 'host', port: 'port', outputNumber: 'output_number', ns: 'ns' })
+        .where({ gateway_device_id: device.id })
+    )
       .then((outputs) => ws.send(JSON.stringify({ type: 'config', outputs })))
       .catch((err) => logger.error({ err, gatewayDeviceId: device.id }, 'Falha ao carregar/enviar config de saídas do gateway'));
 
