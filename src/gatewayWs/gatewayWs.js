@@ -51,10 +51,11 @@ function attachGatewayWs(httpServer) {
 
     // O evento 'connection' vem do servidor WS, fora de qualquer requisição:
     // as consultas abaixo rodam explicitamente no tenant do gateway.
+    // Reconectou: deixa de valer o "encerrado pelo operador" (alerta do sininho).
     runWithTenant(device.company_id, async () =>
       await db('gateway_devices')
         .where({ id: device.id })
-        .update({ last_seen_at: db.fn.now() })
+        .update({ last_seen_at: db.fn.now(), closed_by_operator_at: null })
     ).catch((err) => logger.warn({ err, gatewayDeviceId: device.id }, 'Falha ao atualizar last_seen_at do gateway'));
 
     // Envia a config de saídas (host/porta/número/serial) assim que o
@@ -76,6 +77,16 @@ function attachGatewayWs(httpServer) {
         payload = JSON.parse(raw.toString('utf8'));
       } catch {
         logger.warn({ gatewayDeviceId: device.id }, 'Mensagem não-JSON recebida do gateway, ignorada');
+        return;
+      }
+
+      // O app do gateway avisa antes de fechar normalmente (porteiro encerrou
+      // no fim do expediente) — o sininho mostra "encerrado", não o alarme.
+      if (payload?.type === 'shutdown') {
+        logger.info({ gatewayDeviceId: device.id }, 'Gateway encerrado pelo operador');
+        runWithTenant(device.company_id, async () =>
+          await db('gateway_devices').where({ id: device.id }).update({ closed_by_operator_at: db.fn.now() })
+        ).catch((err) => logger.warn({ err, gatewayDeviceId: device.id }, 'Falha ao registrar encerramento do gateway'));
         return;
       }
 

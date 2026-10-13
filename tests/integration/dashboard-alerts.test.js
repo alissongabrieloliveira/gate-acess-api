@@ -241,6 +241,20 @@ describe('GET /dashboard/alerts', () => {
       expect(res.body.gatewayOffline).toMatchObject({ name: 'Gateway Portaria', offlineSince: since.toISOString() });
     });
 
+    test('queda inesperada -> closedByOperatorAt null', async () => {
+      jest.spyOn(connectionRegistry, 'getOfflineSince').mockReturnValue(new Date(Date.now() - 5 * 60 * 1000));
+      expect((await alerts(operator)).body.gatewayOffline.closedByOperatorAt).toBeNull();
+    });
+
+    test('encerrado pelo operador -> alerta traz a hora do encerramento', async () => {
+      const closedAt = new Date(Date.now() - 10 * 60 * 1000);
+      await db('gateway_devices').where({ id: deviceId }).update({ closed_by_operator_at: closedAt });
+      jest.spyOn(connectionRegistry, 'getOfflineSince').mockReturnValue(closedAt);
+      const res = await alerts(operator);
+      expect(res.body.gatewayOffline).toMatchObject({ closedByOperatorAt: closedAt.toISOString() });
+      await db('gateway_devices').where({ id: deviceId }).update({ closed_by_operator_at: null });
+    });
+
     test('caiu há menos de 2 minutos (reconexão) -> sem alerta', async () => {
       jest.spyOn(connectionRegistry, 'getOfflineSince').mockReturnValue(new Date(Date.now() - 30 * 1000));
       expect((await alerts(operator)).body.gatewayOffline).toBeNull();

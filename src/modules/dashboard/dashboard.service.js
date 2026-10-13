@@ -88,7 +88,14 @@ async function gatewayOfflineAlert(companyId, now) {
   if (!device) return null;
   const offlineSince = connectionRegistry.getOfflineSince(device.id);
   if (!offlineSince || now - offlineSince < GATEWAY_OFFLINE_GRACE_MS) return null;
-  return { name: device.name, offlineSince, lastSeenAt: device.last_seen_at };
+  // closedByOperatorAt preenchido = o porteiro fechou o app do gateway (fim do
+  // expediente), não uma queda: o sininho mostra como informação, sem alarme.
+  return {
+    name: device.name,
+    offlineSince,
+    lastSeenAt: device.last_seen_at,
+    closedByOperatorAt: device.closed_by_operator_at,
+  };
 }
 
 const ACCESS_RETROACTIVE = {

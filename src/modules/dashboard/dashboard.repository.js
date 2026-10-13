@@ -104,7 +104,7 @@ function listRecentRetroactiveFleetLogs(companyId, since) {
 
 function findActiveGatewayDevice(companyId) {
   return db('gateway_devices')
-    .select('id', 'name', 'last_seen_at')
+    .select('id', 'name', 'last_seen_at', 'closed_by_operator_at')
     .where({ company_id: companyId })
     .whereNull('revoked_at')
     .first();
